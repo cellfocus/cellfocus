@@ -1,0 +1,37 @@
+# =============================================================================
+# CellFocus Apache Production Security (.htaccess)
+# =============================================================================
+
+RewriteEngine On
+
+# 1. Enforce HTTPS
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# 2. Block direct access to sensitive configuration and data files
+<FilesMatch "^(\.env|\.git|security\.json|package\.json|package-lock\.json)$">
+    Require all denied
+</FilesMatch>
+
+# 3. HTTP Basic Authentication & IP Whitelist on Admin Paths
+<FilesMatch "^(admin|api/admin)">
+    AuthType Basic
+    AuthName "CellFocus Administrative Area"
+    AuthUserFile /home/username/.htpasswd
+    Require valid-user
+
+    # Optional IP Whitelist (Uncomment and replace with your static IP)
+    # <RequireAny>
+    #     Require ip 203.0.113.45
+    #     Require ip 127.0.0.1
+    # </RequireAny>
+</FilesMatch>
+
+# 4. Security Headers
+<IfModule mod_headers.c>
+    Header set X-XSS-Protection "1; mode=block"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-Content-Type-Options "nosniff"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+

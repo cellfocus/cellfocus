@@ -1,0 +1,1731 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  X, Plus, Edit2, Trash2, Save, RefreshCw, Check, AlertCircle, 
+  Package, ShoppingCart, Truck, Clock, CheckCircle, XCircle, Search, ChevronDown, User, Phone, MapPin, ArrowLeft,
+  UploadCloud, Image as ImageIcon, Flame, Sparkles, Zap, ShieldCheck, Lock, Unlock, Key, Shield
+} from 'lucide-react';
+import defaultProducts from '../data/defaultProducts.json';
+
+const API_PRODUCTS = 'http://localhost:5000/api/products';
+const API_ORDERS = 'http://localhost:5000/api/orders';
+const ADMIN_PASSCODE_KEY = 'cellfocus_admin_passcode';
+const DEFAULT_PASSCODE = 'cellfocus2026';
+
+const STATUS_CONFIG = {
+  Pending: { bg: 'bg-amber-50 text-amber-800 border-amber-300', icon: Clock },
+  Processing: { bg: 'bg-blue-50 text-blue-800 border-blue-300', icon: RefreshCw },
+  Shipped: { bg: 'bg-indigo-50 text-indigo-800 border-indigo-300', icon: Truck },
+  Delivered: { bg: 'bg-emerald-50 text-emerald-800 border-emerald-300', icon: CheckCircle },
+  Cancelled: { bg: 'bg-rose-50 text-rose-800 border-rose-300', icon: XCircle },
+};
+
+export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
+  const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'products' | 'create'
+  const [products, setProducts] = useState(defaultProducts || []);
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [message, setMessage] = useState(null);
+
+  // Filters & Search
+  const [orderFilter, setOrderFilter] = useState('all');
+  const [orderSearch, setOrderSearch] = useState('');
+
+  // Admin Access & Multi-Factor Authentication (MFA) State
+  const [adminPasscode, setAdminPasscode] = useState(() => {
+    try {
+      return localStorage.getItem(ADMIN_PASSCODE_KEY) || DEFAULT_PASSCODE;
+    } catch (e) {
+      return DEFAULT_PASSCODE;
+    }
+  });
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [passcodeInput, setPasscodeInput] = useState('');
+  const [authError, setAuthError] = useState(null);
+  const [newPasscodeInput, setNewPasscodeInput] = useState('');
+
+  // Admin Session Token & MFA States
+  const [adminToken, setAdminToken] = useState(() => {
+    try {
+      return sessionStorage.getItem('cf_admin_token') || '';
+    } catch (e) {
+      return '';
+    }
+  });
+  const [mfaActive, setMfaActive] = useState(false);
+  const [requireMfaPrompt, setRequireMfaPrompt] = useState(false);
+  const [totpCodeInput, setTotpCodeInput] = useState('');
+  const [mfaSetupData, setMfaSetupData] = useState(null);
+  const [mfaSetupCode, setMfaSetupCode] = useState('');
+  const [showMfaModal, setShowMfaModal] = useState(false);
+  const [securityStatus, setSecurityStatus] = useState(null);
+
+  const getAuthHeaders = () => {
+    const token = adminToken || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('cf_admin_token') : '') || '';
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+  };
+
+  const getAuthOnlyHeaders = () => {
+    const token = adminToken || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('cf_admin_token') : '') || '';
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
+  // Sync server security status
+  const fetchSecurityStatus = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/admin/status');
+      const data = await res.json();
+      if (data.success) {
+        setMfaActive(Boolean(data.mfaEnabled));
+        setSecurityStatus(data);
+      }
+    } catch (err) {
+      console.warn('Could not sync admin security status:', err);
+    }
+  };
+
+  // Lock when panel is opened
+  useEffect(() => {
+    if (isOpen) {
+      setIsAuthenticated(false);
+      setPasscodeInput('');
+      setTotpCodeInput('');
+      setRequireMfaPrompt(false);
+      setAuthError(null);
+      fetchSecurityStatus();
+    }
+  }, [isOpen]);
+
+  // Lock body scroll to prevent store scrollbar on the admin panel
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
+
+  // Product form state with Sale, Specs, 4 picture upload slots & Best Seller / Hot Deal toggles
+  const [form, setForm] = useState({
+    name: '',
+    category: 'chargers',
+    price: '',
+    originalPrice: '',
+    isOnSale: false,
+    specs: '',
+    stock: 25,
+    isBestSeller: false,
+    isHotDeal: false,
+    image: '',
+    image2: '',
+    image3: '',
+    image4: '',
+    details: '',
+  });
+
+  // Client-side instant image processing & compression for direct file uploads
+  const processImageUpload = (file, key) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('Please select a valid image file (PNG, JPG, WebP)', 'error');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 1200;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
+        setForm((prev) => ({
+          ...prev,
+          [key]: optimizedDataUrl,
+        }));
+        const slotNum = key === 'image' ? '1' : key === 'image2' ? '2' : key === 'image3' ? '3' : '4';
+        showToast(`Photo ${slotNum} loaded successfully!`);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const showToast = (text, type = 'success') => {
+    setMessage({ text, type });
+    setTimeout(() => setMessage(null), 3500);
+  };
+
+  const fetchProducts = async () => {
+    try {
+      const res = await fetch(API_PRODUCTS);
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        setProducts(json.data);
+      }
+    } catch (err) {
+      console.warn('Failed to load products:', err);
+    }
+  };
+
+  const fetchOrders = async (tokenOverride) => {
+    const activeToken = tokenOverride || adminToken || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('cf_admin_token') : '');
+    if (!activeToken) return;
+    setLoading(true);
+    try {
+      const res = await fetch(API_ORDERS, {
+        headers: {
+          Authorization: `Bearer ${activeToken}`,
+        },
+      });
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        setOrders(json.data);
+      }
+    } catch (err) {
+      console.warn('Failed to load orders:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchProducts();
+      if (isAuthenticated) {
+        fetchOrders();
+      }
+    }
+  }, [isOpen, isAuthenticated]);
+
+  // Handle Order Status Change
+  const handleStatusChange = async (orderId, newStatus) => {
+    try {
+      const res = await fetch(`${API_ORDERS}/${orderId}/status`, {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ status: newStatus }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Order #${orderId} marked as ${newStatus}`);
+        setOrders((prev) =>
+          prev.map((o) => (o.orderId === orderId || o._id === orderId ? { ...o, status: newStatus } : o))
+        );
+      } else {
+        showToast(data.message || 'Failed to update status', 'error');
+      }
+    } catch (err) {
+      showToast('Failed to update status', 'error');
+    }
+  };
+
+  // Delete Order
+  const handleDeleteOrder = async (orderId) => {
+    if (!window.confirm(`Delete order #${orderId}?`)) return;
+    try {
+      const res = await fetch(`${API_ORDERS}/${orderId}`, {
+        method: 'DELETE',
+        headers: getAuthOnlyHeaders(),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Order removed from tracking');
+        setOrders((prev) => prev.filter((o) => o.orderId !== orderId && o._id !== orderId));
+      } else {
+        showToast(data.message || 'Failed to delete order', 'error');
+      }
+    } catch (err) {
+      showToast('Failed to delete order', 'error');
+    }
+  };
+
+  // Product CRUD
+  const handleCreateProduct = async (e) => {
+    e.preventDefault();
+    if (!form.name || !form.price) return showToast('Name and Price are required', 'error');
+    setLoading(true);
+    try {
+      const payload = {
+        ...form,
+        price: parseFloat(form.price),
+        originalPrice: form.originalPrice ? parseFloat(form.originalPrice) : 0,
+        isOnSale: Boolean(form.isOnSale),
+        specs: form.specs || '',
+        stock: parseInt(form.stock) || 10,
+        isBestSeller: Boolean(form.isBestSeller),
+        isHotDeal: Boolean(form.isHotDeal),
+        images: [form.image, form.image2, form.image3, form.image4].filter(Boolean),
+      };
+      const res = await fetch(API_PRODUCTS, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('New accessory created and published!');
+        setForm({
+          name: '',
+          category: 'chargers',
+          price: '',
+          originalPrice: '',
+          isOnSale: false,
+          specs: '',
+          stock: 25,
+          isBestSeller: false,
+          isHotDeal: false,
+          image: '',
+          image2: '',
+          image3: '',
+          image4: '',
+          details: '',
+        });
+        setActiveTab('products');
+        fetchProducts();
+        if (onProductsChanged) onProductsChanged();
+      }
+    } catch (err) {
+      showToast('Error creating product', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStartEdit = (p) => {
+    setEditingId(p.id || p._id);
+    const img1 = p.image || (p.images && p.images[0]) || '';
+    const img2 = p.image2 || (p.images && p.images[1]) || '';
+    const img3 = p.image3 || (p.images && p.images[2]) || '';
+    const img4 = p.image4 || (p.images && p.images[3]) || '';
+    setForm({
+      name: p.name,
+      category: p.category,
+      price: p.price,
+      originalPrice: p.originalPrice || '',
+      isOnSale: Boolean(p.isOnSale),
+      specs: p.specs || '',
+      stock: p.stock || 20,
+      isBestSeller: Boolean(p.isBestSeller),
+      isHotDeal: Boolean(p.isHotDeal),
+      image: img1,
+      image2: img2,
+      image3: img3,
+      image4: img4,
+      details: p.details || '',
+    });
+    setActiveTab('create');
+  };
+
+  const handleUpdateProduct = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const payload = {
+        ...form,
+        price: parseFloat(form.price),
+        originalPrice: form.originalPrice ? parseFloat(form.originalPrice) : 0,
+        isOnSale: Boolean(form.isOnSale),
+        specs: form.specs || '',
+        stock: parseInt(form.stock),
+        isBestSeller: Boolean(form.isBestSeller),
+        isHotDeal: Boolean(form.isHotDeal),
+        images: [form.image, form.image2, form.image3, form.image4].filter(Boolean),
+      };
+      const res = await fetch(`${API_PRODUCTS}/${editingId}`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Product specifications updated!');
+        setEditingId(null);
+        setForm({
+          name: '',
+          category: 'chargers',
+          price: '',
+          originalPrice: '',
+          isOnSale: false,
+          specs: '',
+          stock: 25,
+          isBestSeller: false,
+          isHotDeal: false,
+          image: '',
+          image2: '',
+          image3: '',
+          image4: '',
+          details: '',
+        });
+        setActiveTab('products');
+        fetchProducts();
+        if (onProductsChanged) onProductsChanged();
+      } else {
+        showToast(data.message || 'Error updating product', 'error');
+      }
+    } catch (err) {
+      showToast('Error updating product', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggleSale = async (id) => {
+    try {
+      const res = await fetch(`${API_PRODUCTS}/${id}/onsale`, {
+        method: 'PATCH',
+        headers: getAuthOnlyHeaders(),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message);
+        fetchProducts();
+        if (onProductsChanged) onProductsChanged();
+      } else {
+        showToast(data.message || 'Failed to update Sale status', 'error');
+      }
+    } catch (err) {
+      showToast('Failed to update Sale status', 'error');
+    }
+  };
+
+  const handleToggleBestSeller = async (id) => {
+    try {
+      const res = await fetch(`${API_PRODUCTS}/${id}/bestseller`, {
+        method: 'PATCH',
+        headers: getAuthOnlyHeaders(),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message);
+        fetchProducts();
+        if (onProductsChanged) onProductsChanged();
+      } else {
+        showToast(data.message || 'Failed to update Best Seller status', 'error');
+      }
+    } catch (err) {
+      showToast('Failed to update Best Seller status', 'error');
+    }
+  };
+
+  const handleToggleHotDeal = async (id) => {
+    try {
+      const res = await fetch(`${API_PRODUCTS}/${id}/hotdeal`, {
+        method: 'PATCH',
+        headers: getAuthOnlyHeaders(),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message);
+        fetchProducts();
+        if (onProductsChanged) onProductsChanged();
+      } else {
+        showToast(data.message || 'Failed to update Hot Deal status', 'error');
+      }
+    } catch (err) {
+      showToast('Failed to update Hot Deal status', 'error');
+    }
+  };
+
+  const handleDeleteProduct = async (id) => {
+    if (!window.confirm('Delete this product from catalog?')) return;
+    try {
+      const res = await fetch(`${API_PRODUCTS}/${id}`, {
+        method: 'DELETE',
+        headers: getAuthOnlyHeaders(),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Product deleted');
+        fetchProducts();
+        if (onProductsChanged) onProductsChanged();
+      } else {
+        showToast(data.message || 'Error deleting product', 'error');
+      }
+    } catch (err) {
+      showToast('Error deleting product', 'error');
+    }
+  };
+
+  // Filtered orders
+  const filteredOrders = orders.filter((o) => {
+    const matchesStatus = orderFilter === 'all' || o.status.toLowerCase() === orderFilter.toLowerCase();
+    const matchesSearch =
+      !orderSearch ||
+      o.orderId.toLowerCase().includes(orderSearch.toLowerCase()) ||
+      o.customer?.name?.toLowerCase().includes(orderSearch.toLowerCase()) ||
+      o.customer?.phone?.includes(orderSearch);
+    return matchesStatus && matchesSearch;
+  });
+
+  // Admin Authentication Handlers
+  const handleVerifyPasscode = async (e) => {
+    e.preventDefault();
+    const entered = passcodeInput.trim();
+    setAuthError(null);
+
+    try {
+      const res = await fetch('http://localhost:5000/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: entered }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setAuthError(data.message || 'Invalid Master Passcode.');
+        return;
+      }
+
+      if (data.requireMfa) {
+        setRequireMfaPrompt(true);
+        setAuthError(null);
+        return;
+      }
+
+      if (data.token) {
+        setAdminToken(data.token);
+        try {
+          sessionStorage.setItem('cf_admin_token', data.token);
+        } catch (e) {}
+      }
+      setIsAuthenticated(true);
+      setPasscodeInput('');
+      showToast('Admin Operations Hub unlocked.');
+      fetchOrders(data.token);
+    } catch (err) {
+      // Offline fallback
+      if (entered === adminPasscode || entered === DEFAULT_PASSCODE) {
+        setIsAuthenticated(true);
+        setPasscodeInput('');
+        showToast('Admin Operations Hub unlocked (Local Verification).');
+      } else {
+        setAuthError('Invalid Master Passcode.');
+      }
+    }
+  };
+
+  const handleVerifyMfaToken = async (e) => {
+    e.preventDefault();
+    const token = totpCodeInput.trim();
+    if (!token || token.length < 6) {
+      setAuthError('Please enter a 6-digit authentication code.');
+      return;
+    }
+
+    try {
+      const res = await fetch('http://localhost:5000/api/admin/mfa/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setAuthError(data.message || 'Invalid or expired 6-digit code.');
+        return;
+      }
+
+      if (data.token) {
+        setAdminToken(data.token);
+        try {
+          sessionStorage.setItem('cf_admin_token', data.token);
+        } catch (e) {}
+      }
+      setIsAuthenticated(true);
+      setRequireMfaPrompt(false);
+      setTotpCodeInput('');
+      setPasscodeInput('');
+      showToast('MFA Verified. Operations Hub unlocked.');
+      fetchOrders(data.token);
+    } catch (err) {
+      setAuthError('Error verifying authenticator code.');
+    }
+  };
+
+  const handleUpdatePasscode = async (e) => {
+    e.preventDefault();
+    const newCode = newPasscodeInput.trim();
+    if (!newCode || newCode.length < 6) {
+      showToast('New passcode must be at least 6 characters', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch('http://localhost:5000/api/admin/change-passcode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPasscode: adminPasscode,
+          newPasscode: newCode,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.message || 'Could not update passcode', 'error');
+        return;
+      }
+    } catch (err) {
+      console.warn('Backend update error, saving locally:', err);
+    }
+
+    setAdminPasscode(newCode);
+    try {
+      localStorage.setItem(ADMIN_PASSCODE_KEY, newCode);
+    } catch (err) {
+      console.warn('Failed to save passcode:', err);
+    }
+    setNewPasscodeInput('');
+    showToast('Master Admin Passcode updated successfully!');
+  };
+
+  // Start MFA Setup (Fetch QR Code)
+  const handleStartMfaSetup = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/admin/mfa/setup');
+      const data = await res.json();
+      if (data.success) {
+        setMfaSetupData(data);
+        setShowMfaModal(true);
+        setMfaSetupCode('');
+      } else {
+        showToast('Failed to start MFA setup', 'error');
+      }
+    } catch (err) {
+      showToast('Cannot connect to MFA service', 'error');
+    }
+  };
+
+  // Confirm MFA Setup with first token
+  const handleConfirmMfaSetup = async (e) => {
+    e.preventDefault();
+    if (!mfaSetupCode || mfaSetupCode.trim().length < 6) {
+      showToast('Please enter the 6-digit code from your authenticator app', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch('http://localhost:5000/api/admin/mfa/activate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: mfaSetupCode.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.message || 'Invalid confirmation code', 'error');
+        return;
+      }
+
+      setMfaActive(true);
+      setShowMfaModal(false);
+      setMfaSetupData(null);
+      setMfaSetupCode('');
+      showToast('Multi-Factor Authentication (MFA) is now active!');
+      fetchSecurityStatus();
+    } catch (err) {
+      showToast('Network error activating MFA', 'error');
+    }
+  };
+
+  // Disable MFA
+  const handleDisableMfa = async () => {
+    const entered = window.prompt('Enter your Master Admin Passcode to confirm disabling MFA:');
+    if (!entered) return;
+
+    try {
+      const res = await fetch('http://localhost:5000/api/admin/mfa/disable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: entered }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.message || 'Failed to disable MFA', 'error');
+        return;
+      }
+
+      setMfaActive(false);
+      showToast('MFA has been disabled.');
+      fetchSecurityStatus();
+    } catch (err) {
+      showToast('Error disabling MFA', 'error');
+    }
+  };
+
+  if (!isOpen) return null;
+
+  // Master Passcode & Multi-Factor Access Modal
+  if (!isAuthenticated) {
+    return (
+      <div className="fixed inset-0 z-50 w-full h-full bg-[#0a0c10]/92 backdrop-blur-xl flex items-center justify-center p-4 sm:p-6 select-none animate-in fade-in duration-200">
+        <div className="w-full max-w-md bg-[#12151c] border border-[#232936] rounded-3xl p-6 sm:p-8 shadow-2xl text-center space-y-6">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-[#1b212d] border border-[#2a3346] flex items-center justify-center text-[#00FFFF] shadow-inner">
+            {requireMfaPrompt ? <ShieldCheck className="w-6 h-6 text-[#00FFFF]" /> : <Lock className="w-6 h-6 text-[#00FFFF]" />}
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#1b212d] border border-[#2a3346] text-[#00FFFF] text-[10px] font-bold tracking-widest uppercase mb-1">
+              <ShieldCheck className="w-3 h-3 text-[#00FFFF]" />
+              <span>{requireMfaPrompt ? 'MFA Verification Step 2' : 'Restricted Access'}</span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-light text-white tracking-tight">
+              {requireMfaPrompt ? 'Two-Factor Authentication' : 'Admin Operations Hub'}
+            </h2>
+            <p className="text-xs text-[#9ca3af] max-w-xs mx-auto leading-relaxed">
+              {requireMfaPrompt
+                ? 'Open Google Authenticator or Microsoft Authenticator and enter your current 6-digit code.'
+                : 'Enter your Master Admin Passcode to manage products, pricing, and live orders.'}
+            </p>
+          </div>
+
+          {/* Form: Step 1 Passcode OR Step 2 TOTP Code */}
+          {!requireMfaPrompt ? (
+            <form onSubmit={handleVerifyPasscode} className="space-y-4">
+              <div className="space-y-2 text-left">
+                <label className="text-xs font-semibold text-[#cbd5e1] flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-[#00FFFF]" />
+                  <span>Master Admin Passcode</span>
+                </label>
+                <input
+                  type="password"
+                  value={passcodeInput}
+                  onChange={(e) => {
+                    setPasscodeInput(e.target.value);
+                    setAuthError(null);
+                  }}
+                  placeholder="Enter passcode..."
+                  autoFocus
+                  className="w-full bg-[#181d26] border border-[#2d374d] rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-[#00FFFF] font-mono tracking-wider transition"
+                />
+                {authError && (
+                  <p className="text-xs text-rose-400 flex items-center gap-1 pt-1">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{authError}</span>
+                  </p>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3.5 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all bg-[#00FFFF] hover:bg-[#33ffff] text-[#0a0c10] shadow-[0_0_20px_rgba(0,255,255,0.25)] flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+              >
+                <Unlock className="w-4 h-4" />
+                <span>Verify &amp; Continue</span>
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleVerifyMfaToken} className="space-y-4">
+              <div className="space-y-2 text-left">
+                <label className="text-xs font-semibold text-[#cbd5e1] flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#00FFFF]" />
+                  <span>6-Digit Authenticator Code (TOTP)</span>
+                </label>
+                <input
+                  type="text"
+                  maxLength={6}
+                  value={totpCodeInput}
+                  onChange={(e) => {
+                    setTotpCodeInput(e.target.value.replace(/\D/g, ''));
+                    setAuthError(null);
+                  }}
+                  placeholder="e.g. 123456"
+                  autoFocus
+                  className="w-full bg-[#181d26] border border-[#2d374d] rounded-xl px-4 py-3 text-center text-lg font-mono tracking-widest text-white focus:outline-none focus:border-[#00FFFF] transition"
+                />
+                {authError && (
+                  <p className="text-xs text-rose-400 flex items-center justify-center gap-1 pt-1">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{authError}</span>
+                  </p>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3.5 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all bg-[#00FFFF] hover:bg-[#33ffff] text-[#0a0c10] shadow-[0_0_20px_rgba(0,255,255,0.25)] flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>Verify MFA &amp; Unlock</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setRequireMfaPrompt(false);
+                  setAuthError(null);
+                }}
+                className="w-full text-xs text-[#9ca3af] hover:text-white transition py-1"
+              >
+                &larr; Re-enter Master Passcode
+              </button>
+            </form>
+          )}
+
+          <div className="pt-2 border-t border-[#232936] flex items-center justify-between text-xs text-[#6b7280]">
+            <span className="font-mono text-[11px]">Default: cellfocus2026</span>
+            <button
+              type="button"
+              onClick={onClose}
+              className="hover:text-white transition cursor-pointer flex items-center gap-1"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Exit to Store</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 w-full h-full bg-[#f6f5f0] flex flex-col overflow-hidden">
+      
+      {/* 1. Full-Width Top Header */}
+      <header className="w-full bg-white/95 backdrop-blur-md border-b border-[#e2dfd5] px-6 sm:px-12 py-4 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-3.5">
+          <div className="w-10 h-10 rounded-xl bg-[#1c1b18] text-white flex items-center justify-center shadow-xs">
+            <Package className="w-5 h-5 stroke-[1.8]" />
+          </div>
+          <div>
+            <h1 className="text-base sm:text-lg font-bold text-[#1c1b18] tracking-tight">
+              CellFocus Operations Hub
+            </h1>
+            <p className="text-xs text-[#78746a]">
+              Full Stack Inventory CRUD &bull; Order Tracking &bull; REST API
+            </p>
+          </div>
+        </div>
+
+        {/* Security Status & Exit Buttons */}
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          <div className="hidden md:flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold rounded-full font-mono">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Passcode Protected</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setIsAuthenticated(false);
+              showToast('Admin Hub locked.');
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber-200 bg-amber-50 hover:bg-amber-100 text-[11px] font-bold text-amber-900 transition shadow-xs cursor-pointer"
+            title="Lock Admin Panel"
+          >
+            <Lock className="w-3 h-3 text-amber-700" />
+            <span>Lock</span>
+          </button>
+
+          <button
+            onClick={onClose}
+            className="flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-full border border-[#dedad0] bg-[#f6f5f0] hover:bg-white text-xs font-semibold text-[#1c1b18] transition shadow-xs cursor-pointer"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Return to Store</span>
+          </button>
+
+          <button
+            onClick={onClose}
+            aria-label="Close Admin"
+            className="p-2 rounded-full text-[#78746a] hover:text-[#1c1b18] hover:bg-[#eeebe2] transition cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </header>
+
+      {/* Toast Notification */}
+      {message && (
+        <div className={`px-6 sm:px-12 py-2 text-xs font-semibold flex items-center gap-2 border-b shrink-0 transition-all ${
+          message.type === 'error' ? 'bg-red-50 text-red-800 border-red-200' : 'bg-teal-50 text-teal-800 border-teal-200'
+        }`}>
+          {message.type === 'error' ? <AlertCircle className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+          <span>{message.text}</span>
+        </div>
+      )}
+
+      {/* 2. Full-Width Navigation Tabs Bar */}
+      <div className="w-full border-b border-[#e2dfd5] bg-[#eeebe2]/70 px-6 sm:px-12 pt-3 flex items-center gap-2 sm:gap-4 shrink-0 overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('orders')}
+          className={`pb-3 px-3 sm:px-4 text-xs sm:text-sm font-bold border-b-2 transition flex items-center gap-2 shrink-0 cursor-pointer ${
+            activeTab === 'orders' 
+              ? 'border-[#1c1b18] text-[#1c1b18]' 
+              : 'border-transparent text-[#78746a] hover:text-[#1c1b18]'
+          }`}
+        >
+          <ShoppingCart className="w-4 h-4" />
+          <span>Order Tracking</span>
+          <span className="text-[11px] bg-[#1c1b18] text-white px-2 py-0.2 rounded-full font-mono">
+            {orders.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => { setActiveTab('products'); setEditingId(null); }}
+          className={`pb-3 px-3 sm:px-4 text-xs sm:text-sm font-semibold border-b-2 transition flex items-center gap-2 shrink-0 cursor-pointer ${
+            activeTab === 'products' 
+              ? 'border-[#1c1b18] text-[#1c1b18]' 
+              : 'border-transparent text-[#78746a] hover:text-[#1c1b18]'
+          }`}
+        >
+          <Package className="w-4 h-4" />
+          <span>Catalog ({products.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('create')}
+          className={`pb-3 px-3 sm:px-4 text-xs sm:text-sm font-semibold border-b-2 transition flex items-center gap-1.5 shrink-0 cursor-pointer ${
+            activeTab === 'create' 
+              ? 'border-[#1c1b18] text-[#1c1b18]' 
+              : 'border-transparent text-[#78746a] hover:text-[#1c1b18]'
+          }`}
+        >
+          <Plus className="w-4 h-4" />
+          <span>{editingId ? 'Edit Product' : 'New Product'}</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('security')}
+          className={`pb-3 px-3 sm:px-4 text-xs sm:text-sm font-semibold border-b-2 transition flex items-center gap-1.5 shrink-0 cursor-pointer ${
+            activeTab === 'security' 
+              ? 'border-[#1c1b18] text-[#1c1b18]' 
+              : 'border-transparent text-[#78746a] hover:text-[#1c1b18]'
+          }`}
+        >
+          <Shield className="w-4 h-4 text-[#0d9488]" />
+          <span>Security &amp; Access</span>
+        </button>
+      </div>
+
+      {/* 3. Main Workspace: Single Scroll Container */}
+      <div className="flex-1 overflow-y-auto overscroll-contain px-6 sm:px-12 py-6">
+        <div className="max-w-4xl mx-auto space-y-4">
+          
+          {/* TAB 1: ORDER TRACKING (Exact original clean list layout) */}
+          {activeTab === 'orders' && (
+            <div className="space-y-4">
+              
+              {/* Search & Filter Bar */}
+              <div className="flex flex-col sm:flex-row gap-2 justify-between items-stretch sm:items-center">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-[#78746a]" />
+                  <input
+                    type="text"
+                    placeholder="Search Order ID, customer, phone..."
+                    value={orderSearch}
+                    onChange={(e) => setOrderSearch(e.target.value)}
+                    className="w-full text-xs pl-8 pr-3 py-2 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+                  {['all', 'Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'].map((st) => (
+                    <button
+                      key={st}
+                      onClick={() => setOrderFilter(st)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer whitespace-nowrap ${
+                        orderFilter === st
+                          ? 'bg-[#1c1b18] text-white'
+                          : 'bg-white border border-[#dedad0] text-[#78746a] hover:text-[#1c1b18]'
+                      }`}
+                    >
+                      {st}
+                    </button>
+                  ))}
+                  <button
+                    onClick={fetchOrders}
+                    className="p-1.5 rounded-lg border border-[#dedad0] bg-white text-[#78746a] hover:text-[#1c1b18] cursor-pointer"
+                    title="Refresh"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Order Cards Stacked List */}
+              {filteredOrders.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-[#e5e2d6] p-12 text-center text-xs text-[#78746a]">
+                  No orders match your filter criteria.
+                </div>
+              ) : (
+                <div className="space-y-3.5">
+                  {filteredOrders.map((ord) => {
+                    const cfg = STATUS_CONFIG[ord.status] || STATUS_CONFIG.Pending;
+
+                    return (
+                      <div
+                        key={ord.orderId}
+                        className="bg-white rounded-2xl border border-[#e5e2d6] p-4 shadow-2xs space-y-3"
+                      >
+                        {/* Order Header */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#f0eee6] pb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-[#1c1b18]">
+                              #{ord.orderId}
+                            </span>
+                            <span className="text-[11px] text-[#78746a]">
+                              • {new Date(ord.createdAt).toLocaleDateString()} at {new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+
+                          {/* Status Modifier Dropdown */}
+                          <div className="flex items-center gap-2">
+                            <div className="relative">
+                              <select
+                                value={ord.status}
+                                onChange={(e) => handleStatusChange(ord.orderId, e.target.value)}
+                                className={`text-xs font-bold px-2.5 py-1 rounded-full border appearance-none pr-6 cursor-pointer focus:outline-none ${cfg.bg}`}
+                              >
+                                <option value="Pending">Pending</option>
+                                <option value="Processing">Processing</option>
+                                <option value="Shipped">Shipped</option>
+                                <option value="Delivered">Delivered</option>
+                                <option value="Cancelled">Cancelled</option>
+                              </select>
+                              <ChevronDown className="w-3 h-3 absolute right-2 top-2 pointer-events-none opacity-60" />
+                            </div>
+
+                            <button
+                              onClick={() => handleDeleteOrder(ord.orderId)}
+                              className="p-1 text-[#78746a] hover:text-red-600 transition cursor-pointer"
+                              title="Delete Order"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Customer Details */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-[#4a473f] bg-[#f9f8f4] p-2.5 rounded-xl border border-[#eeebe2]">
+                          <div>
+                            <p className="font-bold text-[#1c1b18] flex items-center gap-1.5">
+                              <User className="w-3 h-3 text-[#78746a]" />
+                              {ord.customer.name}
+                            </p>
+                            <p className="text-[11px] text-[#78746a] flex items-center gap-1.5 mt-0.5">
+                              <Phone className="w-3 h-3 text-[#78746a]" />
+                              {ord.customer.phone}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[11px] text-[#78746a] flex items-start gap-1.5">
+                              <MapPin className="w-3 h-3 text-[#78746a] shrink-0 mt-0.5" />
+                              <span>{ord.customer.address}, {ord.customer.city}</span>
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Ordered Items Preview */}
+                        <div className="space-y-1.5 pt-1">
+                          {ord.items.map((item, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-xs py-1">
+                              <div className="flex items-center gap-2">
+                                <img
+                                  src={item.image || 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=100&q=80'}
+                                  alt={item.name}
+                                  className="w-8 h-8 rounded-lg object-cover bg-[#f4f2ea]"
+                                />
+                                <span className="font-medium text-[#1c1b18] truncate max-w-[200px] sm:max-w-xs">
+                                  {item.name}
+                                </span>
+                                <span className="text-[#78746a] font-mono text-[11px]">x{item.qty}</span>
+                              </div>
+                              <span className="font-mono text-[#1c1b18]">${(item.price * item.qty).toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Financial Total */}
+                        <div className="flex justify-between items-center border-t border-[#f0eee6] pt-2 text-xs font-bold text-[#1c1b18]">
+                          <span className="text-[#78746a] font-normal">
+                            Total (incl. {ord.shipping === 0 ? 'Free Shipping' : `$${ord.shipping} Shipping`})
+                          </span>
+                          <span className="font-mono text-sm">${ord.total.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+            </div>
+          )}
+
+          {/* TAB 2: PRODUCT CATALOG LIST (Exact original clean list layout) */}
+          {activeTab === 'products' && (
+            <div className="space-y-3">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs text-[#78746a]">Manage catalog items</span>
+                <button
+                  onClick={fetchProducts}
+                  className="flex items-center gap-1 text-[11px] font-medium text-[#4a473f] hover:text-[#1c1b18] cursor-pointer"
+                >
+                  <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+              </div>
+
+              {products.length === 0 ? (
+                <p className="text-xs text-[#78746a] py-8 text-center bg-white rounded-2xl border border-[#e5e2d6]">
+                  No products found.
+                </p>
+              ) : (
+                products.map((p) => {
+                  const pid = p.id || p._id;
+                  return (
+                    <div
+                      key={pid}
+                      className="flex items-center justify-between p-3.5 bg-white rounded-xl border border-[#e5e2d6] shadow-2xs gap-3"
+                    >
+                      <div className="relative shrink-0">
+                        <img
+                          src={p.image || (p.images && p.images[0]) || 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=150&q=80'}
+                          alt={p.name}
+                          className="w-12 h-12 rounded-lg object-cover bg-[#eeebe2]"
+                        />
+                        {(p.image2 || (p.images && p.images[1])) && (
+                          <img
+                            src={p.image2 || p.images[1]}
+                            alt="Angle view"
+                            className="w-5 h-5 rounded-md object-cover border border-white absolute -bottom-1 -right-1 shadow-2xs"
+                            title="2nd Photo Attached"
+                          />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded">
+                            {p.category}
+                          </span>
+                          <span className="text-xs text-[#78746a] font-mono">Stock: {p.stock || 20}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleBestSeller(pid)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider flex items-center gap-1 transition cursor-pointer border ${
+                              p.isBestSeller
+                                ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
+                                : 'bg-[#f4f2ea] text-[#78746a] border-[#dedad0] hover:text-[#1c1b18]'
+                            }`}
+                            title="Click to toggle Best Seller status"
+                          >
+                            <Flame className={`w-3 h-3 ${p.isBestSeller ? 'text-amber-600 fill-amber-600' : 'text-[#8a867c]'}`} />
+                            <span>{p.isBestSeller ? 'Best Seller ★' : 'Set as Best Seller'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleHotDeal(pid)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider flex items-center gap-1 transition cursor-pointer border ${
+                              p.isHotDeal
+                                ? 'bg-rose-100 text-rose-900 border-rose-300 hover:bg-rose-200'
+                                : 'bg-[#f4f2ea] text-[#78746a] border-[#dedad0] hover:text-[#1c1b18]'
+                            }`}
+                            title="Click to toggle as exclusive Hot Deal"
+                          >
+                            <Zap className={`w-3 h-3 ${p.isHotDeal ? 'text-rose-600 fill-rose-600' : 'text-[#8a867c]'}`} />
+                            <span>{p.isHotDeal ? 'Hot Deal 🔥' : 'Make Hot Deal'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSale(pid)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider flex items-center gap-1 transition cursor-pointer border ${
+                              p.isOnSale
+                                ? 'bg-red-100 text-red-900 border-red-300 hover:bg-red-200'
+                                : 'bg-[#f4f2ea] text-[#78746a] border-[#dedad0] hover:text-[#1c1b18]'
+                            }`}
+                            title="Click to toggle Sale status"
+                          >
+                            <span>{p.isOnSale ? 'On Sale 🏷️' : 'Set Sale'}</span>
+                          </button>
+                        </div>
+                        <h4 className="text-xs font-semibold text-[#1c1b18] truncate mt-0.5">{p.name}</h4>
+                        <div className="flex items-baseline gap-2 mt-0.5">
+                          <span className="text-xs font-mono font-bold text-[#1c1b18]">
+                            ${Number(p.price).toFixed(2)}
+                          </span>
+                          {p.isOnSale && p.originalPrice > p.price && (
+                            <>
+                              <span className="text-[10px] font-mono text-[#9ca3af] line-through">
+                                ${Number(p.originalPrice).toFixed(2)}
+                              </span>
+                              <span className="text-[9px] font-bold text-rose-700 bg-rose-50 px-1 py-0.2 rounded border border-rose-200">
+                                -{Math.round(((p.originalPrice - p.price) / p.originalPrice) * 100)}% OFF
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleStartEdit(p)}
+                          className="p-1.5 rounded-lg text-[#78746a] hover:text-[#1c1b18] hover:bg-[#eeebe2] transition cursor-pointer"
+                          title="Edit Product"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteProduct(pid)}
+                          className="p-1.5 rounded-lg text-[#78746a] hover:text-red-600 hover:bg-red-50 transition cursor-pointer"
+                          title="Delete Product"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: CREATE / EDIT PRODUCT FORM */}
+          {activeTab === 'create' && (
+            <div className="bg-white p-6 sm:p-8 rounded-2xl border border-[#e5e2d6] shadow-xs">
+              <h3 className="text-sm font-bold text-[#1c1b18] mb-1">
+                {editingId ? 'Edit Product Details' : 'Add New Product'}
+              </h3>
+              <p className="text-xs text-[#78746a] mb-5">
+                Fill in the product specifications. Changes immediately update the live shop.
+              </p>
+
+              <form onSubmit={editingId ? handleUpdateProduct : handleCreateProduct} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Product Title</label>
+                  <input
+                    type="text"
+                    required
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    placeholder="e.g. GaN 100W Fast Charger"
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Category</label>
+                    <select
+                      value={form.category}
+                      onChange={(e) => setForm({ ...form, category: e.target.value })}
+                      className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                    >
+                      <option value="chargers">Chargers</option>
+                      <option value="handsfree">Handsfree</option>
+                      <option value="airpods">AirPods</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Stock Quantity</label>
+                    <input
+                      type="number"
+                      value={form.stock}
+                      onChange={(e) => setForm({ ...form, stock: e.target.value })}
+                      className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                    />
+                  </div>
+                </div>
+
+                {/* Price & Sale Settings */}
+                <div className="p-3.5 rounded-xl border border-[#dedad0] bg-[#faf8f4] space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(form.isOnSale)}
+                        onChange={(e) => setForm({ ...form, isOnSale: e.target.checked })}
+                        className="w-4 h-4 rounded accent-rose-600 cursor-pointer"
+                      />
+                      <span className="text-xs font-bold text-[#1c1b18]">Put this Product on Sale</span>
+                    </label>
+
+                    {form.isOnSale && form.originalPrice && form.price && Number(form.originalPrice) > Number(form.price) && (
+                      <span className="text-[11px] font-bold text-rose-700 bg-rose-100 border border-rose-300 px-2.5 py-0.5 rounded-full font-mono">
+                        Save ${(Number(form.originalPrice) - Number(form.price)).toFixed(2)} (-{Math.round(((Number(form.originalPrice) - Number(form.price)) / Number(form.originalPrice)) * 100)}% OFF)
+                      </span>
+                    )}
+                  </div>
+
+                  {form.isOnSale ? (
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-[#78746a] mb-1">
+                          Old / Original Price ($)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          required={form.isOnSale}
+                          value={form.originalPrice}
+                          onChange={(e) => setForm({ ...form, originalPrice: e.target.value })}
+                          placeholder="e.g. 45.00"
+                          className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-rose-700 mb-1">
+                          New Sale Price ($)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          required
+                          value={form.price}
+                          onChange={(e) => setForm({ ...form, price: e.target.value })}
+                          placeholder="e.g. 29.99"
+                          className="w-full text-xs p-2.5 rounded-xl border border-rose-300 bg-white text-[#1c1b18] focus:outline-none focus:border-rose-600 font-bold font-mono"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Regular Price ($)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        value={form.price}
+                        onChange={(e) => setForm({ ...form, price: e.target.value })}
+                        placeholder="29.99"
+                        className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18] font-mono"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Best Seller of the Month Checkbox Toggle */}
+                <div className="p-3.5 rounded-xl border border-[#dedad0] bg-[#faf8f4] hover:bg-white transition-all">
+                  <label className="flex items-start gap-3 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form.isBestSeller)}
+                      onChange={(e) => setForm({ ...form, isBestSeller: e.target.checked })}
+                      className="w-4 h-4 mt-0.5 rounded accent-[#1c1b18] cursor-pointer"
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-[#1c1b18]">Best Seller of the Month</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-amber-900 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full">
+                          <Flame className="w-3 h-3 text-amber-600 fill-amber-600" />
+                          Featured
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#78746a] mt-0.5 leading-relaxed">
+                        When checked, this accessory automatically appears in the featured <strong>Best Sellers of the Month</strong> section on the storefront.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Exclusive Hot Deal Spotlight Checkbox Toggle */}
+                <div className="p-3.5 rounded-xl border border-rose-200 bg-rose-50/50 hover:bg-rose-50 transition-all">
+                  <label className="flex items-start gap-3 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form.isHotDeal)}
+                      onChange={(e) => setForm({ ...form, isHotDeal: e.target.checked })}
+                      className="w-4 h-4 mt-0.5 rounded accent-rose-600 cursor-pointer"
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-rose-950">Spotlight Hot Deal of the Week</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-rose-800 bg-rose-200/80 border border-rose-300 px-2 py-0.5 rounded-full">
+                          <Zap className="w-3 h-3 text-rose-600 fill-rose-600" />
+                          Exclusive Deal
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-rose-800/80 mt-0.5 leading-relaxed">
+                        Feature this item as the single exclusive <strong>Deal of the Week</strong> banner with live countdown. Selecting this automatically replaces any previously active deal.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Direct 4-Picture Device Upload Section */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#1c1b18] mb-1">
+                      Product Media (Up to 4 Photos)
+                    </label>
+                    <p className="text-[11px] text-[#78746a] mb-2.5">
+                      Upload up to 4 photos directly from your computer or phone. Photo 1 is the storefront cover; Photos 2, 3, and 4 populate the smooth slide gallery in the product details view.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {[
+                      { key: 'image', label: 'Photo 1 (Cover)', sub: 'Primary Cover' },
+                      { key: 'image2', label: 'Photo 2 (Angle)', sub: 'Hover / Side' },
+                      { key: 'image3', label: 'Photo 3 (Detail)', sub: 'Features View' },
+                      { key: 'image4', label: 'Photo 4 (Packaging)', sub: 'Box / Accessories' },
+                    ].map((slot, index) => {
+                      const val = form[slot.key];
+                      return (
+                        <div key={slot.key} className="flex flex-col">
+                          <span className="text-[11px] font-semibold text-[#4a473f] mb-1.5 flex items-center justify-between">
+                            <span className="truncate">{slot.label}</span>
+                            {val && (
+                              <span className="text-[9px] text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded font-mono shrink-0 ml-1">
+                                Ready
+                              </span>
+                            )}
+                          </span>
+
+                          {val ? (
+                            <div className="relative group/slot aspect-square rounded-xl border border-[#dedad0] overflow-hidden bg-[#eeebe2]">
+                              <img
+                                src={val}
+                                alt={`Preview ${index + 1}`}
+                                className="w-full h-full object-cover object-center"
+                              />
+                              <div className="absolute inset-0 bg-black/45 opacity-0 group-hover/slot:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                <label
+                                  className="p-1.5 sm:p-2 rounded-full bg-white text-[#1c1b18] hover:bg-[#dedad0] cursor-pointer shadow-xs transition"
+                                  title={`Change ${slot.label}`}
+                                >
+                                  <UploadCloud className="w-3.5 h-3.5" />
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      if (e.target.files?.[0]) processImageUpload(e.target.files[0], slot.key);
+                                    }}
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => setForm((prev) => ({ ...prev, [slot.key]: '' }))}
+                                  className="p-1.5 sm:p-2 rounded-full bg-rose-600 text-white hover:bg-rose-700 cursor-pointer shadow-xs transition"
+                                  title={`Remove ${slot.label}`}
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <label className="aspect-square rounded-xl border-2 border-dashed border-[#dedad0] hover:border-[#1c1b18] bg-white hover:bg-[#faf9f5] transition flex flex-col items-center justify-center p-2.5 cursor-pointer text-center group">
+                              <div className="w-8 h-8 rounded-full bg-[#f4f2ea] group-hover:bg-[#e6e4dc] flex items-center justify-center text-[#78746a] group-hover:text-[#1c1b18] mb-1.5 transition">
+                                {index === 0 ? <UploadCloud className="w-4 h-4" /> : <ImageIcon className="w-4 h-4" />}
+                              </div>
+                              <span className="text-xs font-semibold text-[#1c1b18] leading-tight">Upload #{index + 1}</span>
+                              <span className="text-[10px] text-[#78746a] mt-0.5 line-clamp-1">{slot.sub}</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  if (e.target.files?.[0]) processImageUpload(e.target.files[0], slot.key);
+                                }}
+                              />
+                            </label>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Product Description</label>
+                  <textarea
+                    rows={2}
+                    value={form.details}
+                    onChange={(e) => setForm({ ...form, details: e.target.value })}
+                    placeholder="Brief description of the product for customers..."
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                  />
+                </div>
+
+                {/* Technical Specs Text Box */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-[#1c1b18]">
+                      Technical Specifications
+                    </label>
+                    <span className="text-[10px] text-[#78746a] font-mono">One spec per line</span>
+                  </div>
+                  <p className="text-[11px] text-[#78746a] mb-2 leading-relaxed">
+                    Type technical specs in <code className="bg-[#eeebe2] px-1 py-0.5 rounded text-[#1c1b18] font-mono">Name: Value</code> format. Only what you enter here will be displayed on the product details page.
+                  </p>
+                  <textarea
+                    rows={5}
+                    value={form.specs}
+                    onChange={(e) => setForm({ ...form, specs: e.target.value })}
+                    placeholder={"Battery Life: 32 Hours with Case\nBluetooth: 5.4 Low Latency\nNoise Canceling: Active ANC -38dB\nWater Resistance: IPX5 Splashproof\nCharging: Fast USB-C + Qi Wireless"}
+                    className="w-full text-xs font-mono p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                  />
+                </div>
+
+                <div className="pt-2 flex gap-3">
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="flex-1 py-3 rounded-xl bg-[#1c1b18] hover:bg-[#32302b] text-[#f6f5f0] text-xs font-semibold tracking-wide flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>{editingId ? 'Save Changes' : 'Publish Product'}</span>
+                  </button>
+
+                  {editingId && (
+                    <button
+                      type="button"
+                      onClick={() => { setEditingId(null); setActiveTab('products'); }}
+                      className="px-4 py-3 rounded-xl border border-[#dedad0] bg-white text-[#4a473f] text-xs font-medium hover:bg-[#eeebe2] transition cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* TAB 4: MULTI-LAYER SECURITY & ACCESS CONTROL */}
+          {activeTab === 'security' && (
+            <div className="space-y-5">
+              
+              {/* Header Box */}
+              <div className="bg-white p-6 sm:p-8 rounded-2xl border border-[#e5e2d6] shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-start sm:items-center gap-3.5">
+                    <div className="w-12 h-12 rounded-2xl bg-[#0a0c10] border border-[#232936] text-[#00FFFF] flex items-center justify-center shrink-0 shadow-xs">
+                      <Shield className="w-6 h-6 stroke-[1.8]" />
+                    </div>
+                    <div>
+                      <h3 className="text-base sm:text-lg font-bold text-[#1c1b18] tracking-tight">
+                        Security &amp; Admin Access
+                      </h3>
+                      <p className="text-xs text-[#78746a] mt-0.5">
+                        Master Passcode Protection &bull; Session Lockdown &bull; Access Policy
+                      </p>
+                    </div>
+                  </div>
+
+                  <span className="self-start sm:self-auto px-3 py-1 rounded-full text-xs font-bold font-mono tracking-wider flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>AUTHENTICATED</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Security Controls Card */}
+              <div className="bg-white p-6 sm:p-8 rounded-2xl border border-[#e5e2d6] shadow-xs space-y-6">
+                
+                {/* 1. Multi-Factor Authentication (MFA / TOTP) Setup Card */}
+                <div className="p-4 rounded-xl border border-[#dedad0] bg-[#faf8f4] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-[#0d9488]" />
+                      <span className="text-xs font-bold text-[#1c1b18]">
+                        Two-Factor Authentication (MFA / TOTP)
+                      </span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full font-mono uppercase ${
+                        mfaActive 
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                          : 'bg-amber-100 text-amber-800 border border-amber-300'
+                      }`}>
+                        {mfaActive ? 'ACTIVE' : 'DISABLED'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#78746a]">
+                      {mfaActive
+                        ? 'Protected by Google Authenticator / Microsoft Authenticator. 6-digit TOTP code required on login.'
+                        : 'Secure your admin panel with Google Authenticator or Microsoft Authenticator (RFC 6238 TOTP).'}
+                    </p>
+                  </div>
+
+                  <div className="shrink-0">
+                    {!mfaActive ? (
+                      <button
+                        type="button"
+                        onClick={handleStartMfaSetup}
+                        className="px-4 py-2 bg-[#1c1b18] hover:bg-[#33312b] text-white text-xs font-semibold rounded-xl transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5 text-[#00FFFF]" />
+                        <span>Enable MFA</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleDisableMfa}
+                        className="px-3.5 py-2 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-800 text-xs font-semibold rounded-xl transition cursor-pointer"
+                      >
+                        Disable MFA
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. Update Master Passcode */}
+                <div className="p-4 rounded-xl border border-[#dedad0] bg-white space-y-3">
+                  <div>
+                    <span className="text-xs font-bold text-[#1c1b18] flex items-center gap-2">
+                      <Key className="w-4 h-4 text-[#0d9488]" />
+                      <span>Change Master Admin Passcode</span>
+                    </span>
+                    <p className="text-xs text-[#78746a] mt-0.5">
+                      Enter a new secure passcode (at least 6 characters) to restrict Operations Hub access.
+                    </p>
+                  </div>
+
+                  <form onSubmit={handleUpdatePasscode} className="flex flex-col sm:flex-row gap-2 max-w-md">
+                    <input
+                      type="password"
+                      value={newPasscodeInput}
+                      onChange={(e) => setNewPasscodeInput(e.target.value)}
+                      placeholder="Enter new master passcode..."
+                      className="flex-1 text-xs p-2.5 rounded-xl border border-[#dedad0] bg-[#faf8f4] text-[#1c1b18] focus:outline-none focus:border-[#1c1b18] font-mono tracking-wider"
+                    />
+                    <button
+                      type="submit"
+                      className="px-4 py-2.5 bg-[#1c1b18] hover:bg-[#33312b] text-white text-xs font-semibold rounded-xl transition cursor-pointer shrink-0"
+                    >
+                      Update Passcode
+                    </button>
+                  </form>
+                </div>
+
+                {/* 3. Session Lockdown Control */}
+                <div className="p-4 rounded-xl border border-[#dedad0] bg-[#faf8f4] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <span className="text-xs font-bold text-[#1c1b18] block">
+                      Immediate Session Lockdown
+                    </span>
+                    <p className="text-xs text-[#78746a] mt-0.5">
+                      Immediately terminate this active admin session and require re-authentication.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAuthenticated(false);
+                      showToast('Session locked.');
+                    }}
+                    className="px-4 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold rounded-xl transition cursor-pointer self-start sm:self-auto"
+                  >
+                    Lock Session Now
+                  </button>
+                </div>
+
+                {/* 4. Production DevOps Checklist Card */}
+                <div className="p-4 rounded-xl border border-[#dedad0] bg-white space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#1c1b18] flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-[#0d9488]" />
+                      <span>Production Server Hardening Status</span>
+                    </span>
+                    {securityStatus?.clientIp && (
+                      <span className="text-[11px] font-mono text-[#78746a]">
+                        Detected IP: <code className="text-[#1c1b18] font-bold">{securityStatus.clientIp}</code>
+                      </span>
+                    )}
+                  </div>
+                  <ul className="text-xs text-[#666258] space-y-1.5 list-disc list-inside">
+                    <li><strong className="text-[#1c1b18]">Rate Limiter Active:</strong> Max 5 login attempts / 15 mins via <code>express-rate-limit</code>.</li>
+                    <li><strong className="text-[#1c1b18]">Helmet Active:</strong> Enterprise HTTP security headers enabled on all endpoints.</li>
+                    <li><strong className="text-[#1c1b18]">Nginx Config Ready:</strong> Pre-configured reverse proxy &amp; IP whitelist in <code>server/deploy/nginx.conf</code>.</li>
+                    <li><strong className="text-[#1c1b18]">Apache .htaccess Ready:</strong> HTTP Basic Auth &amp; security directives in <code>server/deploy/.htaccess</code>.</li>
+                  </ul>
+                </div>
+
+              </div>
+
+              {/* MFA Setup Modal */}
+              {showMfaModal && mfaSetupData && (
+                <div className="fixed inset-0 z-60 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="w-full max-w-sm bg-white rounded-2xl p-6 shadow-2xl border border-[#dedad0] space-y-4 animate-in zoom-in-95">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-bold text-[#1c1b18] flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-[#0d9488]" />
+                        <span>Setup Authenticator App (MFA)</span>
+                      </h4>
+                      <button
+                        type="button"
+                        onClick={() => setShowMfaModal(false)}
+                        className="p-1 rounded-full text-gray-400 hover:text-gray-700"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <p className="text-xs text-[#78746a] leading-relaxed">
+                      1. Open <strong>Google Authenticator</strong> or <strong>Microsoft Authenticator</strong> on your phone.
+                      <br />
+                      2. Scan the QR code below:
+                    </p>
+
+                    <div className="flex justify-center p-2 bg-[#faf8f4] border border-[#dedad0] rounded-xl">
+                      <img src={mfaSetupData.qrImageUrl} alt="MFA QR Code" className="w-44 h-44 rounded-lg" />
+                    </div>
+
+                    <div className="text-[11px] font-mono text-center text-[#78746a] bg-[#eeebe2] p-2 rounded-lg break-all select-all">
+                      Manual Secret: <strong>{mfaSetupData.secret}</strong>
+                    </div>
+
+                    <form onSubmit={handleConfirmMfaSetup} className="space-y-3 pt-1">
+                      <div>
+                        <label className="block text-xs font-semibold text-[#1c1b18] mb-1">
+                          3. Enter 6-digit code to activate:
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={6}
+                          value={mfaSetupCode}
+                          onChange={(e) => setMfaSetupCode(e.target.value.replace(/\D/g, ''))}
+                          placeholder="e.g. 123456"
+                          autoFocus
+                          className="w-full text-center text-lg font-mono tracking-widest p-2 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                        />
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowMfaModal(false)}
+                          className="flex-1 py-2.5 rounded-xl border border-[#dedad0] text-xs font-semibold text-[#78746a] hover:bg-[#faf8f4]"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="flex-1 py-2.5 rounded-xl bg-[#1c1b18] text-white text-xs font-bold hover:bg-[#33312b] shadow-xs"
+                        >
+                          Verify &amp; Activate
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          )}
+
+        </div>
+      </div>
+
+    </div>
+  );
+}

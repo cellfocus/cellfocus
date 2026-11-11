@@ -9,6 +9,7 @@ const Review = require('./models/Review');
 const mongoose = require('mongoose');
 
 const PRODUCTS_FILE = path.join(__dirname, 'data', 'products.json');
+const CLIENT_PRODUCTS_FILE = path.join(__dirname, '..', 'client', 'src', 'data', 'defaultProducts.json');
 const ORDERS_FILE = path.join(__dirname, 'data', 'orders.json');
 const REVIEWS_FILE = path.join(__dirname, 'data', 'reviews.json');
 
@@ -36,6 +37,13 @@ function readJson(file, fallback) {
 
 function writeJson(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8');
+  if (file === PRODUCTS_FILE && fs.existsSync(path.dirname(CLIENT_PRODUCTS_FILE))) {
+    try {
+      fs.writeFileSync(CLIENT_PRODUCTS_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    } catch (e) {
+      // non-blocking
+    }
+  }
 }
 
 class StorageEngine {

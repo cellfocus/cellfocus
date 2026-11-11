@@ -67,6 +67,21 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    displayOrder: {
+      type: Number,
+      default: 1,
+    },
+    categoryOrder: {
+      type: Number,
+      default: 1,
+    },
+    colors: [
+      {
+        name: { type: String, default: '' },
+        hex: { type: String, default: '#000000' },
+        image: { type: String, default: '' },
+      },
+    ],
   },
   {
     timestamps: true,

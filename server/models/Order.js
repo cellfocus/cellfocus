@@ -21,6 +21,7 @@ const orderSchema = new mongoose.Schema(
         price: Number,
         qty: Number,
         image: String,
+        selectedColor: String,
       },
     ],
     subtotal: { type: Number, required: true },
@@ -28,7 +29,7 @@ const orderSchema = new mongoose.Schema(
     total: { type: Number, required: true },
     status: {
       type: String,
-      enum: ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'],
+      enum: ['Pending', 'Shipped', 'Dispatched', 'Dispached', 'Return', 'Processing', 'Delivered', 'Cancelled'],
       default: 'Pending',
     },
   },

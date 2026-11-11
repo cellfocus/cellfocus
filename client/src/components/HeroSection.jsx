@@ -16,26 +16,35 @@ const heroSlides = [
   {
     id: 'chargers',
     eyebrow: 'Fast Charging 02',
-    title: 'Precision GaN Power',
-    tagline: 'High-density gallium nitride chargers engineered for silent, temperature-controlled rapid charging.',
+    title: '65W Super Fast GaN Power',
+    tagline: 'High-density GaN charger with triple-port flash delivery and smart IC temperature control. Built for phones, tablets & laptops.',
+    specs: ['65W Flash Charging', 'Triple Port USB-C & USB-A', 'Smart IC Temperature Guard'],
     cta: 'Explore Chargers',
-    image: 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=1800&q=85',
+    image: '/hero-cellfocus-gan-charger.jpg',
+    filter: 'contrast-[1.04] brightness-[1.0] saturate-[1.05]',
+    mobilePosition: 'max-sm:object-[54%_38%]',
+  },
+  {
+    id: 'chargers',
+    eyebrow: 'Cyber Edition 03',
+    title: '120W Cyber Turbo Power',
+    tagline: 'Futuristic Mecha aesthetics with real-time digital power monitoring and high-efficiency dual-port turbo flash charging.',
+    specs: ['120W Flash Charge', 'Digital Power Display', 'Dual Port Turbo Output'],
+    cta: 'Explore Chargers',
+    image: '/hero-cellfocus-cyber-charger.jpg',
+    filter: 'contrast-[1.04] brightness-[1.0] saturate-[1.05]',
+    mobilePosition: 'max-sm:object-[50%_38%]',
   },
   {
     id: 'airpods',
-    eyebrow: 'True Wireless 03',
-    title: 'Acoustic Clarity & ANC',
-    tagline: 'Engineered for seamless spatial presence, adaptive noise cancellation, and ergonomic all-day comfort.',
+    eyebrow: 'Acoustic Pro 04',
+    title: 'AirPods Pro Active ANC',
+    tagline: 'Immersive studio acoustic fidelity with active noise cancellation, low-latency gaming sync, and wireless charging case.',
+    specs: ['Active Noise Cancellation', 'Spatial Studio Audio', '30h Total Playtime'],
     cta: 'Explore AirPods',
-    image: 'https://images.unsplash.com/photo-1600294037681-c80b4cb5b434?auto=format&fit=crop&w=1800&q=85',
-  },
-  {
-    id: 'handsfree',
-    eyebrow: 'Wired Fidelity 04',
-    title: 'Lossless Studio Audio',
-    tagline: 'Pure copper braided cores with integrated digital-to-analog decoding for true high-resolution playback.',
-    cta: 'Explore Handsfree',
-    image: 'https://images.unsplash.com/photo-1546435770-a3e426bf472b?auto=format&fit=crop&w=1800&q=85',
+    image: '/hero-cellfocus-airpods-pro.jpg',
+    filter: 'contrast-[1.04] brightness-[1.0] saturate-[1.05]',
+    mobilePosition: 'max-sm:object-[50%_38%]',
   },
 ];
 
@@ -79,6 +88,7 @@ export default function HeroSection({ onExploreCategory }) {
 
   return (
     <section 
+      id="hero-section"
       className="relative w-full overflow-hidden bg-[#1c1b18] border-b border-[#e2dfd5] h-[calc(100dvh-4rem)] sm:h-[calc(100vh-5rem)] min-h-[520px] sm:min-h-[440px] sm:max-h-[850px] flex items-end rounded-none"
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
@@ -96,11 +106,14 @@ export default function HeroSection({ onExploreCategory }) {
           >
             <img
               src={slide.image}
-              alt={slide.title}
+              alt={`${slide.title} - CellFocus Mobile Accessories Pakistan, Wholesale & Retail`}
+              loading={idx === 0 ? 'eager' : 'lazy'}
+              fetchPriority={idx === 0 ? 'high' : 'auto'}
+              decoding="async"
               className={`w-full h-full object-cover sm:object-center ${slide.filter || ''} ${slide.mobilePosition || 'object-center'}`}
             />
-            {/* Cinematic subtle vignette overlay for aesthetic depth */}
-            <div className="absolute inset-0 bg-gradient-to-r from-black/55 via-black/20 to-transparent pointer-events-none" />
+            {/* Cinematic subtle vignette overlay for aesthetic depth: bottom-to-top on mobile, left-to-right on desktop */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent sm:bg-gradient-to-r sm:from-black/65 sm:via-black/25 sm:to-transparent pointer-events-none" />
           </div>
         ))}
       </div>
@@ -108,6 +121,12 @@ export default function HeroSection({ onExploreCategory }) {
       {/* Slide Content Overlay with GSAP Minimal Typography */}
       <div className="relative z-20 w-full max-w-7xl mx-auto px-6 sm:px-10 pb-16 sm:pb-12 pt-4 flex flex-col md:flex-row md:items-end justify-between gap-6 md:gap-8 pointer-events-none">
         <div ref={overlayRef} className="max-w-xl space-y-2 sm:space-y-3 pointer-events-auto">
+          {currentSlide.eyebrow && (
+            <div className="gsap-hero-item inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-[10px] sm:text-[11px] font-semibold tracking-widest text-[#00FFFF] uppercase shadow-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#00FFFF] animate-pulse" />
+              <span>{currentSlide.eyebrow}</span>
+            </div>
+          )}
           <h1 className="gsap-hero-item text-2xl sm:text-4xl lg:text-5xl font-light tracking-tight text-white leading-[1.1] drop-shadow-md">
             {currentSlide.title}
           </h1>

@@ -69,16 +69,10 @@ export default function ReturnPolicySection() {
       desc: 'Submit your return or exchange request within 7 calendar days from the day you receive your parcel.',
     },
     {
-      icon: ArrowRightLeft,
-      step: '02',
-      title: 'Doorstep Swap or Pickup',
-      desc: 'Our rider arrives at your doorstep to inspect and pick up the item or deliver your exchange unit.',
-    },
-    {
       icon: ShieldCheck,
-      step: '03',
-      title: 'Instant Refund or Replacement',
-      desc: 'Receive a brand-new sealed replacement or an immediate refund transfer to your bank/JazzCash.',
+      step: '02',
+      title: 'Mandatory Quality Check',
+      desc: 'All returned items undergo a mandatory quality check by our team upon arrival. A final decision on your refund or exchange will be made and shared with you once the inspection is complete.',
     },
   ];
 
@@ -112,8 +106,8 @@ export default function ReturnPolicySection() {
           </p>
         </div>
 
-        {/* 3 Step Process Grid */}
-        <div ref={stepsGridRef} className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 lg:gap-4 mb-4 sm:mb-5 lg:mb-4">
+        {/* 2 Step Process Grid */}
+        <div ref={stepsGridRef} className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 lg:gap-4 mb-4 sm:mb-5 lg:mb-4">
           {steps.map((item, idx) => {
             const Icon = item.icon;
             return (
@@ -135,7 +129,7 @@ export default function ReturnPolicySection() {
                     {item.title}
                   </h3>
 
-                  <p className="text-xs text-[#78746a] font-light leading-relaxed line-clamp-2 sm:line-clamp-3">
+                  <p className="text-xs text-[#78746a] font-light leading-relaxed">
                     {item.desc}
                   </p>
                 </div>

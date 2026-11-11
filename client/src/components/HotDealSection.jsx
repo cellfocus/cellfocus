@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ShoppingBag, Zap, Check, Flame, Clock } from 'lucide-react';
 import gsap from 'gsap';
+import { useCurrency } from '../context/CurrencyContext';
 
 export default function HotDealSection({ product, onAddToCart, onSelectProduct }) {
   if (!product) return null;
 
+  const { formatPrice } = useCurrency();
   const sectionRef = useRef(null);
   const imgBoxRef = useRef(null);
   const textGroupRef = useRef(null);
@@ -122,8 +124,42 @@ export default function HotDealSection({ product, onAddToCart, onSelectProduct }
     : (regularPrice * 1.35).toFixed(2);
   const discountPercent = Math.round(((originalPrice - regularPrice) / originalPrice) * 100);
 
-  const img1 = product.image || (product.images && product.images[0]) || 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=800&q=80';
-  const img2 = product.image2 || (product.images && product.images[1]);
+  // Gather all available distinct photos
+  const allImages = React.useMemo(() => {
+    const list = [];
+    const pushIfValid = (src) => {
+      if (src && typeof src === 'string' && src.trim().length > 0 && !list.includes(src.trim())) {
+        list.push(src.trim());
+      }
+    };
+    pushIfValid(product.image);
+    pushIfValid(product.image2);
+    pushIfValid(product.image3);
+    pushIfValid(product.image4);
+    if (Array.isArray(product.images)) {
+      product.images.forEach(pushIfValid);
+    }
+    if (list.length === 0) {
+      list.push('https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=800&q=80');
+    }
+    return list;
+  }, [product]);
+
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [isDealHovered, setIsDealHovered] = useState(false);
+
+  useEffect(() => {
+    if (!isDealHovered || allImages.length <= 1) {
+      setActiveImageIndex(0);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setActiveImageIndex((prev) => (prev + 1) % allImages.length);
+    }, 1400);
+
+    return () => clearInterval(timer);
+  }, [isDealHovered, allImages.length]);
 
   return (
     <section
@@ -143,28 +179,30 @@ export default function HotDealSection({ product, onAddToCart, onSelectProduct }
             <div
               ref={imgBoxRef}
               onClick={() => onSelectProduct && onSelectProduct(product)}
+              onMouseEnter={() => setIsDealHovered(true)}
+              onMouseLeave={() => {
+                setIsDealHovered(false);
+                setActiveImageIndex(0);
+              }}
               className="relative w-full max-w-sm sm:max-w-md h-[240px] sm:h-[290px] lg:h-[320px] xl:h-[350px] rounded-2xl overflow-hidden bg-gradient-to-b from-[#f9fafb] to-[#edf0f5] p-5 lg:p-6 flex items-center justify-center group/deal shadow-sm border border-white cursor-pointer"
             >
               
-              {/* Product Cover Photo with secondary hover transition */}
-              <img
-                src={img1}
-                alt={product.name}
-                className={`max-h-full max-w-full object-contain transition-all duration-500 drop-shadow-sm ${
-                  img2 ? 'group-hover/deal:opacity-0' : 'group-hover/deal:scale-105'
-                }`}
-              />
-
-              {img2 && (
+              {/* Product Photos with animated hover transitions */}
+              {allImages.map((src, idx) => (
                 <img
-                  src={img2}
-                  alt={`${product.name} angle`}
-                  className="absolute inset-0 m-auto max-h-[85%] max-w-[85%] object-contain opacity-0 group-hover/deal:opacity-100 group-hover/deal:scale-105 transition-all duration-500 drop-shadow-sm"
+                  key={idx}
+                  src={src}
+                  alt={`${product.name} view ${idx + 1}`}
+                  className={`absolute inset-0 m-auto max-h-[85%] max-w-[85%] object-contain transition-all duration-700 ease-out drop-shadow-sm will-change-transform ${
+                    idx === activeImageIndex
+                      ? 'opacity-100 scale-105 z-10'
+                      : 'opacity-0 scale-100 z-0 pointer-events-none'
+                  }`}
                 />
-              )}
+              ))}
 
               {/* Floating Colorful Badges */}
-              <div className="absolute top-3.5 left-3.5 flex flex-col gap-1.5">
+              <div className="absolute top-3.5 left-3.5 z-20 flex flex-col gap-1.5">
                 <span className="inline-flex items-center gap-1 px-3 py-1 bg-rose-600 text-white text-[11px] font-bold uppercase tracking-wider rounded-full shadow-xs">
                   <Flame className="w-3.5 h-3.5 fill-white" />
                   <span>HOT DEAL</span>
@@ -173,12 +211,6 @@ export default function HotDealSection({ product, onAddToCart, onSelectProduct }
                   {discountPercent}% OFF
                 </span>
               </div>
-
-              {img2 && (
-                <span className="absolute bottom-3 right-3 text-[10px] font-medium bg-black/60 text-white px-2.5 py-0.5 rounded-full backdrop-blur-xs opacity-0 group-hover/deal:opacity-100 transition-opacity">
-                  Hover for 2nd photo
-                </span>
-              )}
             </div>
           </div>
 
@@ -213,13 +245,13 @@ export default function HotDealSection({ product, onAddToCart, onSelectProduct }
               {/* Price section with Original Strike-Through */}
               <div className="flex items-baseline gap-3 pt-0.5">
                 <span className="text-2xl sm:text-3xl lg:text-4xl font-bold font-mono text-[#1c1b18]">
-                  ${regularPrice.toFixed(2)}
+                  {formatPrice(regularPrice)}
                 </span>
                 <span className="text-base sm:text-xl font-mono text-[#9ca3af] line-through">
-                  ${originalPrice}
+                  {formatPrice(originalPrice)}
                 </span>
                 <span className="text-[11px] sm:text-xs font-bold text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                  Save ${(originalPrice - regularPrice).toFixed(2)}
+                  Save {formatPrice(originalPrice - regularPrice)}
                 </span>
               </div>
             </div>

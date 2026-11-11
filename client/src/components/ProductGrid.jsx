@@ -1,15 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Check, Loader2, LayoutGrid, Zap, AudioLines, Headphones, Flame } from 'lucide-react';
 import gsap from 'gsap';
+import { useCurrency } from '../context/CurrencyContext';
 import HotDealSection from './HotDealSection';
 import WhyCellFocusSection from './WhyCellFocusSection';
+import NeedBulkSection from './NeedBulkSection';
+import ClientReviewsSection from './ClientReviewsSection';
 import FAQSection from './FAQSection';
 import AboutUsSection from './AboutUsSection';
 import ReturnPolicySection from './ReturnPolicySection';
 import ContactUsSection from './ContactUsSection';
 import defaultProducts from '../data/defaultProducts.json';
+import { ENDPOINTS } from '../config/api';
 
-const API_BASE = 'http://localhost:5000/api/products';
+const API_BASE = ENDPOINTS.PRODUCTS;
 
 const CATEGORIES = [
   { id: 'all', label: 'All', icon: LayoutGrid },
@@ -19,61 +23,163 @@ const CATEGORIES = [
 ];
 
 function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct }) {
+  const { formatPrice } = useCurrency();
   const pid = product.id || product._id;
-  const img1 = product.image || (product.images && product.images[0]) || 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=700&q=80';
-  const img2 = product.image2 || (product.images && product.images[1]);
+
+  const validColors = React.useMemo(() => {
+    return Array.isArray(product.colors)
+      ? product.colors.filter((c) => c && typeof c.name === 'string' && c.name.trim().length > 0)
+      : [];
+  }, [product.colors]);
+
+  const [selectedColor, setSelectedColor] = useState(
+    validColors.length > 0 ? validColors[0] : null
+  );
+
+  useEffect(() => {
+    if (validColors.length > 0) {
+      setSelectedColor(validColors[0]);
+    } else {
+      setSelectedColor(null);
+    }
+  }, [validColors]);
+
+  // Gather all available distinct photos (prioritizing selected color picture)
+  const allImages = React.useMemo(() => {
+    const list = [];
+    const pushIfValid = (src) => {
+      if (src && typeof src === 'string' && src.trim().length > 0 && !list.includes(src.trim())) {
+        list.push(src.trim());
+      }
+    };
+    if (selectedColor?.image) {
+      pushIfValid(selectedColor.image);
+    }
+    pushIfValid(product.image);
+    pushIfValid(product.image2);
+    pushIfValid(product.image3);
+    pushIfValid(product.image4);
+    if (validColors.length > 0) {
+      validColors.forEach((col) => pushIfValid(col.image));
+    }
+    if (Array.isArray(product.images)) {
+      product.images.forEach(pushIfValid);
+    }
+    if (list.length === 0) {
+      list.push('https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=700&q=80');
+    }
+    return list;
+  }, [product, selectedColor]);
+
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [isHovered, setIsHovered] = useState(false);
+
+  // Smooth animated cycling across all pictures while item is hovered
+  useEffect(() => {
+    if (!isHovered || allImages.length <= 1) {
+      setActiveImageIndex(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setActiveImageIndex((prev) => (prev + 1) % allImages.length);
+    }, 1300);
+
+    return () => clearInterval(interval);
+  }, [isHovered, allImages.length]);
+
+  // Interactive mouse scrubbing across pictures
+  const handleMouseMove = (e) => {
+    if (allImages.length <= 1) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const fraction = Math.max(0, Math.min(0.99, x / rect.width));
+    const targetIdx = Math.floor(fraction * allImages.length);
+    if (targetIdx !== activeImageIndex) {
+      setActiveImageIndex(targetIdx);
+    }
+  };
+
+  const handleColorClick = (e, color) => {
+    e.stopPropagation();
+    setSelectedColor(color);
+    setActiveImageIndex(0);
+  };
+
   const hasSale = Boolean(product.isOnSale && product.originalPrice && Number(product.originalPrice) > Number(product.price));
   const discountPercent = hasSale ? Math.round(((Number(product.originalPrice) - Number(product.price)) / Number(product.originalPrice)) * 100) : 0;
 
   return (
     <div
-      onClick={() => onSelectProduct && onSelectProduct(product)}
+      onClick={() =>
+        onSelectProduct &&
+        onSelectProduct({
+          ...product,
+          selectedColor: selectedColor?.name || (product.colors?.[0]?.name) || null,
+          image: selectedColor?.image || product.image,
+        })
+      }
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => {
+        setIsHovered(false);
+        setActiveImageIndex(0);
+      }}
       className={`group bg-[#ffffff] p-2.5 sm:p-3.5 rounded-none border border-[#e6e4dc] hover:border-[#1c1b18] transition-all shadow-2xs flex flex-col justify-between cursor-pointer ${className}`}
     >
-      {/* Product Image: Clean square box without rounded corners */}
-      <div className="relative aspect-square rounded-none overflow-hidden bg-[#f4f2ea] mb-2.5 group/media">
-        <img
-          src={img1}
-          alt={product.name}
-          className={`w-full h-full object-cover object-center transition-all duration-500 ${img2 ? 'group-hover/media:opacity-0' : 'group-hover/media:scale-[1.02]'}`}
-        />
-        {img2 && (
+      {/* Product Image: Clean square box with smooth animated picture transitions */}
+      <div 
+        className="relative aspect-square rounded-none overflow-hidden bg-[#f4f2ea] mb-2.5 group/media"
+        onMouseMove={handleMouseMove}
+      >
+        {allImages.map((src, idx) => (
           <img
-            src={img2}
-            alt={`${product.name} angle`}
-            className="absolute inset-0 w-full h-full object-cover object-center opacity-0 group-hover/media:opacity-100 group-hover/media:scale-[1.02] transition-all duration-500"
+            key={idx}
+            src={src}
+            alt={`${product.name} - CellFocus Original Mobile Accessories Pakistan, Wholesale & Retail (${product.category || 'Accessories'})`}
+            loading="lazy"
+            decoding="async"
+            className={`absolute inset-0 w-full h-full object-contain p-2 sm:p-2.5 transition-all duration-700 ease-out will-change-transform ${
+              idx === activeImageIndex
+                ? 'opacity-100 scale-[1.03] z-10'
+                : 'opacity-0 scale-100 z-0 pointer-events-none'
+            }`}
           />
+        ))}
+
+        {/* Minimal clean progress indicator when hovered on multi-picture items */}
+        {allImages.length > 1 && isHovered && (
+          <div className="absolute bottom-2 inset-x-0 flex items-center justify-center gap-1 z-20 pointer-events-none transition-opacity duration-300">
+            {allImages.map((_, i) => (
+              <span
+                key={i}
+                className={`h-0.5 rounded-full transition-all duration-300 ${
+                  i === activeImageIndex
+                    ? 'w-4 bg-white shadow-xs'
+                    : 'w-1.5 bg-white/40'
+                }`}
+              />
+            ))}
+          </div>
         )}
-        <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-none bg-white/95 text-[9px] font-semibold text-[#1c1b18] uppercase tracking-wider border border-[#e5e2d6]">
+
+        <span className="absolute top-1.5 left-1.5 z-20 px-1.5 py-0.5 rounded-none bg-white/95 text-[9px] font-semibold text-[#1c1b18] uppercase tracking-wider border border-[#e5e2d6]">
           {product.category}
         </span>
         {hasSale ? (
-          <span className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded-none bg-rose-600 text-[9px] font-bold text-white uppercase tracking-wider border border-rose-700 shadow-xs">
+          <span className="absolute top-1.5 right-1.5 z-20 px-2 py-0.5 rounded-none bg-rose-600 text-[9px] font-bold text-white uppercase tracking-wider border border-rose-700 shadow-xs">
             -{discountPercent}%
           </span>
         ) : product.isHotDeal ? (
-          <span className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded-none bg-rose-600 text-[9px] font-bold text-white uppercase tracking-wider border border-rose-700 flex items-center gap-1 shadow-xs">
+          <span className="absolute top-1.5 right-1.5 z-20 px-2 py-0.5 rounded-none bg-rose-600 text-[9px] font-bold text-white uppercase tracking-wider border border-rose-700 flex items-center gap-1 shadow-xs">
             <Zap className="w-2.5 h-2.5 fill-white text-white" />
             <span>Hot Deal</span>
           </span>
         ) : product.isBestSeller ? (
-          <span className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded-none bg-[#1c1b18] text-[9px] font-bold text-amber-300 uppercase tracking-wider border border-[#1c1b18] flex items-center gap-1 shadow-xs">
+          <span className="absolute top-1.5 right-1.5 z-20 px-2 py-0.5 rounded-none bg-[#1c1b18] text-[9px] font-bold text-amber-300 uppercase tracking-wider border border-[#1c1b18] flex items-center gap-1 shadow-xs">
             <Flame className="w-2.5 h-2.5 text-amber-400 fill-amber-400" />
             <span>Best Seller</span>
           </span>
         ) : null}
-        {img2 && !product.isBestSeller && !product.isHotDeal && !hasSale && (
-          <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded-none bg-black/70 text-[8px] font-medium text-white tracking-wider opacity-0 group-hover/media:opacity-100 transition-opacity">
-            2 Photos
-          </span>
-        )}
-
-        {/* Hover Hint to View Full Specs & Photos */}
-        <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none p-3">
-          <span className="px-3 py-1 bg-white/95 text-[#1c1b18] text-[10px] font-bold uppercase tracking-wider shadow-md backdrop-blur-xs flex items-center gap-1">
-            <span>View Specs &amp; Photos</span>
-          </span>
-        </div>
       </div>
 
       {/* Product Info */}
@@ -85,25 +191,75 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
             </h3>
             <div className="flex items-baseline gap-1.5 shrink-0">
               <span className="text-xs sm:text-sm font-semibold text-[#1c1b18] font-mono">
-                ${Number(product.price).toFixed(2)}
+                {formatPrice(product.price)}
               </span>
               {hasSale && (
                 <span className="text-[10px] text-[#9ca3af] line-through font-mono">
-                  ${Number(product.originalPrice).toFixed(2)}
+                  {formatPrice(product.originalPrice)}
                 </span>
               )}
             </div>
           </div>
 
-          <p className="text-[11px] sm:text-xs text-[#78746a] mb-3 line-clamp-1 sm:line-clamp-2">
+          <p className="text-[11px] sm:text-xs text-[#78746a] mb-2 line-clamp-1 sm:line-clamp-2">
             {product.details}
           </p>
+
+          {/* Color Variants Swatches - click immediately shifts picture to that color */}
+          {validColors.length > 0 && (
+            <div className="flex items-center gap-2 mb-2.5 pt-0.5 flex-wrap">
+              <span className="text-[10px] text-[#78746a] font-medium">Color:</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {validColors.map((c, i) => {
+                  const isSelected = selectedColor?.name === c.name || (!selectedColor && i === 0);
+                  const isLight = (() => {
+                    const hex = (c.hex || '#000000').replace('#', '');
+                    const r = parseInt(hex.substring(0, 2), 16) || 0;
+                    const g = parseInt(hex.substring(2, 4), 16) || 0;
+                    const b = parseInt(hex.substring(4, 6), 16) || 0;
+                    return (r * 299 + g * 587 + b * 114) / 1000 > 170;
+                  })();
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={(e) => handleColorClick(e, c)}
+                      className={`w-5 h-5 rounded-full transition-all cursor-pointer relative flex items-center justify-center ${
+                        isSelected
+                          ? 'ring-2 ring-[#1c1b18] ring-offset-2 scale-110 shadow-xs'
+                          : 'opacity-80 hover:opacity-100 hover:scale-105'
+                      }`}
+                      style={{ backgroundColor: c.hex || '#000000' }}
+                      title={`${c.name || 'Color'} (Click to view)`}
+                    >
+                      <span className="absolute inset-0 rounded-full border border-black/15 pointer-events-none" />
+                      {isSelected && (
+                        <Check
+                          className={`w-2.5 h-2.5 relative z-10 ${
+                            isLight ? 'text-black' : 'text-white'
+                          }`}
+                          strokeWidth={3}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-[10px] text-[#1c1b18] font-bold truncate">
+                {selectedColor?.name || validColors[0]?.name}
+              </span>
+            </div>
+          )}
         </div>
 
         <button
           onClick={(e) => {
             e.stopPropagation();
-            onAdd(product);
+            onAdd({
+              ...product,
+              selectedColor: selectedColor?.name || (validColors[0]?.name) || null,
+              image: selectedColor?.image || product.image,
+            });
           }}
           className={`w-full py-2 rounded-none text-xs font-medium transition flex items-center justify-center gap-1.5 cursor-pointer ${isAdded
             ? 'bg-[#1c1b18] text-[#f6f5f0]'
@@ -166,9 +322,24 @@ export default function ProductGrid({ activeCategory, onAddToCart, refreshTrigge
     }
   }, [activeCategory]);
 
-  const displayedProducts = filter === 'all'
-    ? products
-    : products.filter((p) => p.category.toLowerCase() === filter.toLowerCase());
+  const displayedProducts = React.useMemo(() => {
+    if (filter === 'all') {
+      return [...products].sort((a, b) => {
+        const ordA = a.displayOrder !== undefined ? Number(a.displayOrder) : 999;
+        const ordB = b.displayOrder !== undefined ? Number(b.displayOrder) : 999;
+        if (ordA !== ordB) return ordA - ordB;
+        return (Number(a.categoryOrder) || 999) - (Number(b.categoryOrder) || 999);
+      });
+    }
+    return products
+      .filter((p) => (p.category || '').toLowerCase() === filter.toLowerCase())
+      .sort((a, b) => {
+        const ordA = a.categoryOrder !== undefined ? Number(a.categoryOrder) : (a.displayOrder !== undefined ? Number(a.displayOrder) : 999);
+        const ordB = b.categoryOrder !== undefined ? Number(b.categoryOrder) : (b.displayOrder !== undefined ? Number(b.displayOrder) : 999);
+        if (ordA !== ordB) return ordA - ordB;
+        return (Number(a.displayOrder) || 999) - (Number(b.displayOrder) || 999);
+      });
+  }, [products, filter]);
 
   const bestSellers = products.filter((p) => Boolean(p.isBestSeller));
   const hotDealProduct = products.find((p) => Boolean(p.isHotDeal));
@@ -296,6 +467,9 @@ export default function ProductGrid({ activeCategory, onAddToCart, refreshTrigge
             <h2 className="text-2xl sm:text-4xl font-light text-[#1c1b18] tracking-tight">
               Shop Now
             </h2>
+            <p className="text-xs sm:text-sm text-[#78746a] mt-1.5 font-light max-w-lg">
+              Original Mobile Accessories in Pakistan &bull; Wholesale &amp; Retail Sasta Charger, Earpods &amp; Handsfree Price
+            </p>
 
             {/* Categories with Icons Centered Below */}
             <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-2.5 mt-5">
@@ -409,7 +583,13 @@ export default function ProductGrid({ activeCategory, onAddToCart, refreshTrigge
       {/* 4. WHY PEOPLE BUY FROM CELLFOCUS (Animated via GSAP, right after Deal of the Week) */}
       <WhyCellFocusSection />
 
-      {/* 5. QUESTIONS, ANSWERED (Interactive FAQ with colorful accents) */}
+      {/* 5. NEED BULK? (Wholesale & B2B Inventory Supply) */}
+      <NeedBulkSection />
+
+      {/* 5b. CLIENT REVIEWS & TESTIMONIALS */}
+      <ClientReviewsSection />
+
+      {/* 6. QUESTIONS, ANSWERED (Interactive FAQ with colorful accents) */}
       <FAQSection />
 
       {/* 6. ABOUT US (Minimal editorial with animated typography) */}

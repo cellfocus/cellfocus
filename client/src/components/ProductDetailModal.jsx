@@ -5,13 +5,13 @@ import {
   Minus,
   ShoppingBag,
   RotateCcw,
-  MessageCircle,
   ArrowLeft,
   Check,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
 import gsap from 'gsap';
+import { useCurrency } from '../context/CurrencyContext';
 
 // Helper to provide only the exact pictures belonging to the clicked product
 const getProductGallery = (product) => {
@@ -83,6 +83,7 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [qty, setQty] = useState(1);
   const [addedNotice, setAddedNotice] = useState(false);
+  const [selectedColor, setSelectedColor] = useState(null);
 
   const modalRef = useRef(null);
   const contentRef = useRef(null);
@@ -106,14 +107,28 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
     setTouchStartX(null);
   };
 
-  // Reset selected image and quantity whenever the product changes or opens
+  const validColors = React.useMemo(() => {
+    return Array.isArray(product?.colors)
+      ? product.colors.filter((c) => c && typeof c.name === 'string' && c.name.trim().length > 0)
+      : [];
+  }, [product?.colors]);
+
+  // Reset selected image, color and quantity whenever the product changes or opens
   useEffect(() => {
     if (product) {
       setActiveImageIndex(0);
       setQty(1);
       setAddedNotice(false);
+      if (validColors.length > 0) {
+        const found = product.selectedColor
+          ? validColors.find((c) => c.name === product.selectedColor)
+          : null;
+        setSelectedColor(found || validColors[0]);
+      } else {
+        setSelectedColor(null);
+      }
     }
-  }, [product]);
+  }, [product, isOpen, validColors]);
 
   // Lock body scroll when modal is open
   useEffect(() => {
@@ -148,9 +163,36 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
+  const gallery = React.useMemo(() => {
+    if (!product) return [];
+    const list = [];
+    const pushIfValid = (src) => {
+      if (src && typeof src === 'string' && src.trim().length > 0 && !list.includes(src.trim())) {
+        list.push(src.trim());
+      }
+    };
+    if (selectedColor?.image) {
+      pushIfValid(selectedColor.image);
+    }
+    pushIfValid(product.image);
+    pushIfValid(product.image2);
+    pushIfValid(product.image3);
+    pushIfValid(product.image4);
+    if (validColors.length > 0) {
+      validColors.forEach((col) => pushIfValid(col.image));
+    }
+    if (Array.isArray(product.images)) {
+      product.images.forEach(pushIfValid);
+    }
+    if (list.length === 0) {
+      list.push('https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=1000&q=80');
+    }
+    return list;
+  }, [product, selectedColor]);
+
   if (!isOpen || !product) return null;
 
-  const gallery = getProductGallery(product);
+  const { formatPrice } = useCurrency();
   const userSpecs = parseSpecs(product.specs);
 
   const currentPrice = Number(product.price) || 0;
@@ -167,29 +209,40 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
   const handleIncrement = () => setQty((prev) => Math.min(prev + 1, product.stock || 20));
   const handleDecrement = () => setQty((prev) => Math.max(prev - 1, 1));
 
+  const handleColorSelect = (c) => {
+    setSelectedColor(c);
+    setActiveImageIndex(0);
+  };
+
   const handleAddToCartClick = () => {
     if (onAddToCart) {
-      for (let i = 0; i < qty; i++) {
-        onAddToCart(product);
-      }
+      onAddToCart(
+        {
+          ...product,
+          selectedColor: selectedColor?.name || (product.colors?.[0]?.name) || null,
+          image: selectedColor?.image || product.image,
+        },
+        qty
+      );
     }
     setAddedNotice(true);
     setTimeout(() => setAddedNotice(false), 2000);
   };
 
   const handleBuyNowClick = () => {
+    const itemToBuy = {
+      ...product,
+      selectedColor: selectedColor?.name || (product.colors?.[0]?.name) || null,
+      image: selectedColor?.image || product.image,
+    };
     if (onBuyNow) {
-      onBuyNow(product, qty);
+      onBuyNow(itemToBuy, qty);
     } else if (onAddToCart) {
       for (let i = 0; i < qty; i++) {
-        onAddToCart(product);
+        onAddToCart(itemToBuy);
       }
     }
   };
-
-  const whatsappMessage = encodeURIComponent(
-    `Hi CellFocus! I would like to order:\n\n*${product.name}*\nPrice: $${currentPrice.toFixed(2)}${isOnSale ? ` (Sale -${discountPercent}% OFF)` : ''}\nQuantity: ${qty}\n\nPlease confirm availability and dispatch.`
-  );
 
   return (
     <div
@@ -242,7 +295,7 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
               <div
                 onTouchStart={handleTouchStart}
                 onTouchEnd={(e) => handleTouchEnd(e, gallery.length)}
-                className="relative aspect-square w-full rounded-xl overflow-hidden bg-[#faf8f4] border border-[#e5e1d5] group shadow-2xs"
+                className="relative aspect-square sm:aspect-[4/5] md:aspect-square lg:aspect-[4/5] max-h-[460px] w-full rounded-2xl overflow-hidden bg-[#faf8f4] border border-[#e5e1d5] group shadow-2xs mx-auto"
               >
                 {/* Smooth Animated Horizontal Sliding Strip */}
                 <div
@@ -252,12 +305,14 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
                   {gallery.map((img, idx) => (
                     <div
                       key={idx}
-                      className="min-w-full w-full h-full shrink-0 flex items-center justify-center p-1 sm:p-2 select-none"
+                      className="min-w-full w-full h-full shrink-0 flex items-center justify-center p-3 sm:p-4 select-none"
                     >
                       <img
                         src={img}
-                        alt={`${product.name} view ${idx + 1}`}
-                        className="max-h-full max-w-full w-full h-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+                        alt={`${product.name} - Original CellFocus Mobile Accessories Pakistan, Wholesale & Retail (${product.category || 'Accessories'})`}
+                        loading="eager"
+                        decoding="async"
+                        className="max-h-full max-w-full w-auto h-auto object-contain transition-transform duration-300 group-hover:scale-[1.02] drop-shadow-xs"
                         draggable={false}
                       />
                     </div>
@@ -306,25 +361,27 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
                 )}
               </div>
 
-              {/* Thumbnails Row: with active highlight indicator */}
+              {/* Thumbnails Row: with proportional aspect ratio and safe inner padding */}
               {gallery.length > 1 && (
-                <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                <div className="flex items-center gap-2.5 overflow-x-auto py-1 px-0.5">
                   {gallery.map((img, idx) => (
                     <button
                       key={idx}
                       type="button"
                       onClick={() => setActiveImageIndex(idx)}
-                      className={`relative w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-[#faf8f4] border transition-all cursor-pointer p-0.5 flex items-center justify-center ${
+                      className={`relative w-14 sm:w-16 h-18 sm:h-20 shrink-0 rounded-xl overflow-hidden bg-[#faf8f4] transition-all cursor-pointer p-1.5 flex items-center justify-center ${
                         activeImageIndex === idx
-                          ? 'border-[#1c1b18] ring-2 ring-[#1c1b18] scale-[1.03]'
-                          : 'border-[#e4dfd2] hover:border-[#1c1b18]/50 opacity-60 hover:opacity-100'
+                          ? 'border-2 border-[#1c1b18] shadow-md scale-105 bg-white'
+                          : 'border border-[#e4dfd2] hover:border-[#1c1b18]/60 opacity-70 hover:opacity-100'
                       }`}
                       aria-label={`View angle ${idx + 1}`}
                     >
                       <img
                         src={img}
-                        alt={`${product.name} angle ${idx + 1}`}
-                        className="w-full h-full object-contain"
+                        alt={`${product.name} thumbnail photo angle ${idx + 1}`}
+                        loading="lazy"
+                        decoding="async"
+                        className="max-h-full max-w-full w-auto h-auto object-contain select-none"
                       />
                     </button>
                   ))}
@@ -356,15 +413,15 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
               <div className="p-3.5 bg-[#faf8f4] border border-[#e6e2d8]">
                 <div className="flex items-baseline gap-3 flex-wrap">
                   <span className="text-2xl sm:text-3xl font-bold font-mono text-[#1c1b18]">
-                    ${currentPrice.toFixed(2)}
+                    {formatPrice(currentPrice)}
                   </span>
                   {isOnSale && (
                     <>
                       <span className="text-base font-mono text-[#9ca3af] line-through">
-                        ${originalPrice.toFixed(2)}
+                        {formatPrice(originalPrice)}
                       </span>
                       <span className="text-[11px] font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-none uppercase">
-                        Save ${(originalPrice - currentPrice).toFixed(2)} ({discountPercent}% OFF)
+                        Save {formatPrice(originalPrice - currentPrice)} ({discountPercent}% OFF)
                       </span>
                     </>
                   )}
@@ -373,6 +430,60 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
                   Available in stock ({product.stock || 20} units) &bull; Doorstep Delivery
                 </span>
               </div>
+
+              {/* Color Variant Selector */}
+              {validColors.length > 0 && (
+                <div className="space-y-2 py-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-[#1c1b18]">
+                      Color: <span className="font-bold normal-case text-teal-800">{selectedColor?.name || validColors[0]?.name}</span>
+                    </span>
+                    <span className="text-[11px] text-[#78746a]">
+                      {validColors.length} choices available
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {validColors.map((c, i) => {
+                      const isSelected = selectedColor?.name === c.name || (!selectedColor && i === 0);
+                      const isLight = (() => {
+                        const hex = (c.hex || '#000000').replace('#', '');
+                        const r = parseInt(hex.substring(0, 2), 16) || 0;
+                        const g = parseInt(hex.substring(2, 4), 16) || 0;
+                        const b = parseInt(hex.substring(4, 6), 16) || 0;
+                        return (r * 299 + g * 587 + b * 114) / 1000 > 170;
+                      })();
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => handleColorSelect(c)}
+                          className={`px-3 py-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-2 ${
+                            isSelected
+                              ? 'border-[#1c1b18] bg-[#1c1b18] text-white shadow-xs scale-[1.02]'
+                              : 'border-[#dedad0] bg-white text-[#1c1b18] hover:border-[#1c1b18]/60 hover:bg-[#faf8f4]'
+                          }`}
+                          title={c.name}
+                        >
+                          <span
+                            className="w-4 h-4 rounded-full border border-black/20 relative flex items-center justify-center shrink-0"
+                            style={{ backgroundColor: c.hex || '#000000' }}
+                          >
+                            {isSelected && (
+                              <Check
+                                className={`w-2.5 h-2.5 ${
+                                  isLight ? 'text-black' : 'text-white'
+                                }`}
+                                strokeWidth={3}
+                              />
+                            )}
+                          </span>
+                          <span className="text-xs font-semibold">{c.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Quantity Selector */}
               <div className="flex items-center gap-3 pt-1">
@@ -401,7 +512,7 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
                   </button>
                 </div>
                 <span className="text-xs text-[#78746a]">
-                  Total: <strong className="text-[#1c1b18] font-mono">${(currentPrice * qty).toFixed(2)}</strong>
+                  Total: <strong className="text-[#1c1b18] font-mono">{formatPrice(currentPrice * qty)}</strong>
                 </span>
               </div>
 
@@ -432,19 +543,6 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
                 >
                   <span>Buy It Now</span>
                 </button>
-              </div>
-
-              {/* Direct WhatsApp Quick Order */}
-              <div className="pt-1">
-                <a
-                  href={`https://wa.me/923269589597?text=${whatsappMessage}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full py-2.5 px-3 rounded-none text-xs font-semibold tracking-wide transition-all flex items-center justify-center gap-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 cursor-pointer"
-                >
-                  <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Order via WhatsApp (0326 9589597)</span>
-                </a>
               </div>
 
             </div>

@@ -12,9 +12,17 @@ export default function ThreadsLoader({ minDuration = 3000, onFinished }) {
   const [phase, setPhase] = useState('active'); // 'active' -> 'exiting' -> 'done'
 
   useEffect(() => {
-    const timer = setTimeout(() => setPhase('exiting'), minDuration);
+    const timer = setTimeout(() => {
+      setPhase('exiting');
+      // Safety fallback in case transitionend is dropped by the browser or backgrounded tab
+      const safetyTimer = setTimeout(() => {
+        setPhase('done');
+        if (onFinished) onFinished();
+      }, 750);
+      return () => clearTimeout(safetyTimer);
+    }, minDuration);
     return () => clearTimeout(timer);
-  }, [minDuration]);
+  }, [minDuration, onFinished]);
 
   const handleTransitionEnd = (e) => {
     if (e.target === e.currentTarget && phase === 'exiting') {

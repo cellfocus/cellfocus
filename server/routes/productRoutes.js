@@ -30,7 +30,7 @@ router.get('/:id', async (req, res) => {
 // POST create product (Admin Protected)
 router.post('/', requireAdminAuth, async (req, res) => {
   try {
-    const { name, category, price, image, image2, image3, image4, images, details, stock, isBestSeller, isHotDeal, isOnSale, originalPrice, specs } = req.body;
+    const { name, category, price, image, image2, image3, image4, images, details, stock, isBestSeller, isHotDeal, isOnSale, originalPrice, specs, displayOrder, categoryOrder, colors } = req.body;
     if (!name || price === undefined) {
       return res.status(400).json({ success: false, message: 'Name and price are required' });
     }
@@ -50,8 +50,28 @@ router.post('/', requireAdminAuth, async (req, res) => {
       specs: specs || '',
       isBestSeller: Boolean(isBestSeller),
       isHotDeal: Boolean(isHotDeal),
+      displayOrder: displayOrder !== undefined ? Number(displayOrder) : undefined,
+      categoryOrder: categoryOrder !== undefined ? Number(categoryOrder) : undefined,
+      colors: Array.isArray(colors) ? colors : [],
     });
     res.status(201).json({ success: true, message: 'Product created successfully', data: newProduct });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// PATCH update product ordering numbers (Admin Protected)
+router.patch('/:id/order', requireAdminAuth, async (req, res) => {
+  try {
+    const { displayOrder, categoryOrder } = req.body;
+    const patchData = {};
+    if (displayOrder !== undefined) patchData.displayOrder = Number(displayOrder);
+    if (categoryOrder !== undefined) patchData.categoryOrder = Number(categoryOrder);
+    const updated = await repo.updateProduct(req.params.id, patchData);
+    if (!updated) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    res.json({ success: true, message: 'Product ordering updated', data: updated });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

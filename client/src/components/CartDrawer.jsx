@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Trash2, Plus, Minus, ArrowRight, ShoppingBag, CheckCircle2, User, Phone, MapPin, Mail } from 'lucide-react';
+import { X, Trash2, Plus, Minus, ArrowRight, ShoppingBag, CheckCircle2, User, Phone, MapPin, Mail, MessageCircle, Truck } from 'lucide-react';
+import { useCurrency } from '../context/CurrencyContext';
+import { ENDPOINTS } from '../config/api';
 
-const API_ORDERS = 'http://localhost:5000/api/orders';
+const API_ORDERS = ENDPOINTS.ORDERS;
 
 export default function CartDrawer({
   isOpen,
@@ -10,19 +12,21 @@ export default function CartDrawer({
   onUpdateQty,
   onRemoveItem,
   onClearCart,
-  initialStep = 'cart'
+  initialStep = 'cart',
+  onOpenTracking
 }) {
+  const { formatPrice } = useCurrency();
   const [step, setStep] = useState(initialStep); // 'cart' | 'checkout' | 'success'
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [placedOrder, setPlacedOrder] = useState(null);
 
   // Customer form state
   const [customer, setCustomer] = useState({
-    name: 'Sarah Connor',
-    email: 'sarah.c@example.com',
-    phone: '+1 (555) 019-2834',
-    address: '450 North Beverly Drive',
-    city: 'Los Angeles, CA'
+    name: '',
+    email: '',
+    phone: '',
+    address: '',
+    city: ''
   });
 
   // Lock body scroll when cart is open & sync step
@@ -38,10 +42,20 @@ export default function CartDrawer({
     };
   }, [isOpen, initialStep]);
 
+  // Construct instant WhatsApp message for customer order
+  const getWhatsAppOrderUrl = (order) => {
+    if (!order) return '';
+    const itemsText = (order.items || [])
+      .map((it) => `• ${it.name}${it.selectedColor ? ` [Color: ${it.selectedColor}]` : ''} (Qty: ${it.qty}) - Rs. ${(it.price * it.qty).toLocaleString()}`)
+      .join('\n');
+    const msg = `Assalam-o-Alaikum CellFocus! 📦✨\n\nI just placed an order on your website:\n\n*Order ID:* #${order.orderId}\n*Customer:* ${order.customer?.name || customer.name}\n*Phone:* ${order.customer?.phone || customer.phone}\n*Address:* ${order.customer?.address || customer.address}, ${order.customer?.city || customer.city}\n\n*Items Ordered:*\n${itemsText}\n\n*Total Amount:* Rs. ${Number(order.total).toLocaleString()} PKR\n\nPlease confirm my order and share delivery updates. Thank you!`;
+    return `https://wa.me/923269589597?text=${encodeURIComponent(msg)}`;
+  };
+
   if (!isOpen) return null;
 
   const subtotal = cartItems.reduce((acc, item) => acc + item.price * item.qty, 0);
-  const shipping = subtotal > 35 || subtotal === 0 ? 0 : 4.99;
+  const shipping = subtotal > 2000 || subtotal === 0 ? 0 : 250;
   const total = subtotal + shipping;
 
   const handlePlaceOrder = async (e) => {
@@ -139,7 +153,7 @@ export default function CartDrawer({
                   </div>
                   <div className="flex justify-between text-[#78746a]">
                     <span>Total Paid:</span>
-                    <span className="text-[#1c1b18] font-bold">${placedOrder.total.toFixed(2)}</span>
+                    <span className="text-[#1c1b18] font-bold">{formatPrice(placedOrder.total)}</span>
                   </div>
                   <div className="flex justify-between text-[#78746a]">
                     <span>Deliver to:</span>
@@ -147,18 +161,36 @@ export default function CartDrawer({
                   </div>
                 </div>
 
-                <button
-                  onClick={handleClose}
-                  className="w-full py-3 rounded-xl bg-[#1c1b18] hover:bg-[#32302b] text-[#f6f5f0] text-xs font-semibold cursor-pointer transition"
-                >
-                  Return to Store
-                </button>
+                <div className="w-full space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleClose();
+                      if (onOpenTracking) onOpenTracking(placedOrder.orderId);
+                    }}
+                    className="w-full py-2.5 rounded-xl border border-[#dedad0] bg-white hover:bg-[#faf8f4] text-[#1c1b18] text-xs font-semibold cursor-pointer transition flex items-center justify-center gap-1.5"
+                  >
+                    <Truck className="w-4 h-4 text-emerald-600" />
+                    <span>Track Order Live</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleClose}
+                    className="w-full py-3 rounded-xl bg-[#1c1b18] hover:bg-[#32302b] text-[#f6f5f0] text-xs font-semibold cursor-pointer transition"
+                  >
+                    Return to Store
+                  </button>
+                </div>
               </div>
             )}
 
             {/* Checkout Form View */}
             {step === 'checkout' && (
-              <form onSubmit={handlePlaceOrder} className="space-y-3.5">
+              <form onSubmit={handlePlaceOrder} className="space-y-3.5" autoComplete="off">
+                {/* Dummy inputs to absorb browser autofill heuristics */}
+                <input type="text" name="prevent_autofill" style={{ display: 'none' }} tabIndex="-1" />
+                <input type="password" name="prevent_autofill_pwd" style={{ display: 'none' }} tabIndex="-1" />
                 <p className="text-xs text-[#78746a]">
                   Enter your shipping details for rapid 24h dispatch:
                 </p>
@@ -172,7 +204,11 @@ export default function CartDrawer({
                     required
                     value={customer.name}
                     onChange={(e) => setCustomer({ ...customer, name: e.target.value })}
-                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                    name="cf_receiver_name"
+                    id="cf_receiver_name"
+                    placeholder="Enter your full name"
+                    autoComplete="new-password"
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] placeholder:text-[#a09c91] focus:outline-none focus:border-[#1c1b18]"
                   />
                 </div>
 
@@ -185,7 +221,11 @@ export default function CartDrawer({
                     required
                     value={customer.email}
                     onChange={(e) => setCustomer({ ...customer, email: e.target.value })}
-                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                    name="cf_receiver_email"
+                    id="cf_receiver_email"
+                    placeholder="name@example.com"
+                    autoComplete="new-password"
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] placeholder:text-[#a09c91] focus:outline-none focus:border-[#1c1b18]"
                   />
                 </div>
 
@@ -198,7 +238,11 @@ export default function CartDrawer({
                     required
                     value={customer.phone}
                     onChange={(e) => setCustomer({ ...customer, phone: e.target.value })}
-                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                    name="cf_receiver_phone"
+                    id="cf_receiver_phone"
+                    placeholder="03XX XXXXXXX"
+                    autoComplete="new-password"
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] placeholder:text-[#a09c91] focus:outline-none focus:border-[#1c1b18]"
                   />
                 </div>
 
@@ -211,16 +255,22 @@ export default function CartDrawer({
                     required
                     value={customer.address}
                     onChange={(e) => setCustomer({ ...customer, address: e.target.value })}
-                    placeholder="Street, Apartment or Suite"
-                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18] mb-2"
+                    name="cf_receiver_address"
+                    id="cf_receiver_address"
+                    placeholder="House / Street / Apartment details"
+                    autoComplete="new-password"
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] placeholder:text-[#a09c91] focus:outline-none focus:border-[#1c1b18] mb-2"
                   />
                   <input
                     type="text"
                     required
                     value={customer.city}
                     onChange={(e) => setCustomer({ ...customer, city: e.target.value })}
-                    placeholder="City, State / Region"
-                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                    name="cf_receiver_city"
+                    id="cf_receiver_city"
+                    placeholder="City (e.g. Lahore, Karachi, Peshawar)"
+                    autoComplete="new-password"
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] placeholder:text-[#a09c91] focus:outline-none focus:border-[#1c1b18]"
                   />
                 </div>
 
@@ -237,7 +287,7 @@ export default function CartDrawer({
                     disabled={isSubmitting}
                     className="flex-1 py-3 rounded-xl bg-[#1c1b18] hover:bg-[#32302b] text-[#f6f5f0] text-xs font-semibold tracking-wide flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
                   >
-                    {isSubmitting ? 'Placing Order...' : `Confirm & Place Order ($${total.toFixed(2)})`}
+                    {isSubmitting ? 'Placing Order...' : `Confirm & Place Order (${formatPrice(total)})`}
                   </button>
                 </div>
               </form>
@@ -262,51 +312,60 @@ export default function CartDrawer({
                   </button>
                 </div>
               ) : (
-                cartItems.map((item) => (
-                  <div 
-                    key={item.id}
-                    className="flex gap-4 p-3.5 bg-white rounded-2xl border border-[#e5e2d6] shadow-2xs items-center justify-between"
-                  >
-                    <img
-                      src={item.image || 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=300&q=80'}
-                      alt={item.name}
-                      className="w-16 h-16 rounded-xl object-cover bg-[#f4f2ea] shrink-0"
-                    />
+                cartItems.map((item) => {
+                  const itemKey = item.cartKey || item.id;
+                  return (
+                    <div 
+                      key={itemKey}
+                      className="flex gap-4 p-3.5 bg-white rounded-2xl border border-[#e5e2d6] shadow-2xs items-center justify-between"
+                    >
+                      <img
+                        src={item.image || 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=300&q=80'}
+                        alt={item.name}
+                        className="w-16 h-16 rounded-xl object-contain bg-[#f4f2ea] shrink-0 p-1"
+                      />
 
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-xs font-semibold text-[#1c1b18] truncate">{item.name}</h4>
-                      <p className="text-xs font-mono text-[#78746a] mt-0.5">${Number(item.price).toFixed(2)}</p>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-xs font-semibold text-[#1c1b18] truncate">{item.name}</h4>
+                        {item.selectedColor && (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-teal-800 bg-teal-50 border border-teal-200 px-1.5 py-0.2 rounded font-medium mt-0.5">
+                            <span>Color:</span>
+                            <strong>{item.selectedColor}</strong>
+                          </span>
+                        )}
+                        <p className="text-xs font-mono text-[#78746a] mt-0.5">{formatPrice(item.price)}</p>
 
-                      <div className="flex items-center gap-2 mt-2">
-                        <div className="flex items-center border border-[#e2dfd5] rounded-lg bg-[#f6f5f0]">
-                          <button
-                            onClick={() => onUpdateQty(item.id, -1)}
-                            className="p-1 hover:bg-[#eeebe2] text-[#4a473f] rounded-l-lg transition cursor-pointer"
-                            aria-label="Decrease quantity"
-                          >
-                            <Minus className="w-3 h-3" />
-                          </button>
-                          <span className="px-2 text-xs font-mono font-medium text-[#1c1b18]">{item.qty}</span>
-                          <button
-                            onClick={() => onUpdateQty(item.id, 1)}
-                            className="p-1 hover:bg-[#eeebe2] text-[#4a473f] rounded-r-lg transition cursor-pointer"
-                            aria-label="Increase quantity"
-                          >
-                            <Plus className="w-3 h-3" />
-                          </button>
+                        <div className="flex items-center gap-2 mt-2">
+                          <div className="flex items-center border border-[#e2dfd5] rounded-lg bg-[#f6f5f0]">
+                            <button
+                              onClick={() => onUpdateQty(itemKey, -1)}
+                              className="p-1 hover:bg-[#eeebe2] text-[#4a473f] rounded-l-lg transition cursor-pointer"
+                              aria-label="Decrease quantity"
+                            >
+                              <Minus className="w-3 h-3" />
+                            </button>
+                            <span className="px-2 text-xs font-mono font-medium text-[#1c1b18]">{item.qty}</span>
+                            <button
+                              onClick={() => onUpdateQty(itemKey, 1)}
+                              className="p-1 hover:bg-[#eeebe2] text-[#4a473f] rounded-r-lg transition cursor-pointer"
+                              aria-label="Increase quantity"
+                            >
+                              <Plus className="w-3 h-3" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <button
-                      onClick={() => onRemoveItem(item.id)}
-                      className="p-2 text-[#78746a] hover:text-red-600 transition cursor-pointer"
-                      title="Remove item"
-                    >
-                      <Trash2 className="w-4 h-4 stroke-[1.6]" />
-                    </button>
-                  </div>
-                ))
+                      <button
+                        onClick={() => onRemoveItem(itemKey)}
+                        className="p-2 text-[#78746a] hover:text-red-600 transition cursor-pointer"
+                        title="Remove item"
+                      >
+                        <Trash2 className="w-4 h-4 stroke-[1.6]" />
+                      </button>
+                    </div>
+                  );
+                })
               )
             )}
 
@@ -318,17 +377,17 @@ export default function CartDrawer({
               <div className="space-y-1.5 text-xs text-[#78746a]">
                 <div className="flex justify-between">
                   <span>Subtotal</span>
-                  <span className="font-mono text-[#1c1b18]">${subtotal.toFixed(2)}</span>
+                  <span className="font-mono text-[#1c1b18]">{formatPrice(subtotal)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Shipping</span>
                   <span className="font-mono text-[#1c1b18]">
-                    {shipping === 0 ? 'FREE' : `$${shipping.toFixed(2)}`}
+                    {shipping === 0 ? 'FREE' : formatPrice(shipping)}
                   </span>
                 </div>
                 <div className="border-t border-[#e2dfd5] pt-2 flex justify-between text-sm font-bold text-[#1c1b18]">
                   <span>Total</span>
-                  <span className="font-mono">${total.toFixed(2)}</span>
+                  <span className="font-mono">{formatPrice(total)}</span>
                 </div>
               </div>
 

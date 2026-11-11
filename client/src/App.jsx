@@ -9,7 +9,9 @@ import Footer from './components/Footer';
 import ThreadsLoader from './components/ThreadsLoader';
 import PageSkeleton from './components/PageSkeleton';
 import ProductDetailModal from './components/ProductDetailModal';
+import OrderTrackingModal from './components/OrderTrackingModal';
 import WhatsAppButton from './components/WhatsAppButton';
+import SEOHead from './components/SEOHead';
 
 function App() {
   // Staged initial load: 'loader' (3s) -> 'skeleton' (2s) -> 'ready' (full interactive website)
@@ -149,17 +151,59 @@ function App() {
   const [detailProduct, setDetailProduct] = useState(null);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [isTrackingOpen, setIsTrackingOpen] = useState(false);
+  const [trackingInitialId, setTrackingInitialId] = useState('');
 
-  // Support for obfuscated secret URL admin access (e.g., /?portal=manage-cf-9x7q or /?portal=admin)
+  const handleOpenTracking = (orderId = '') => {
+    const cleanId = typeof orderId === 'string' ? orderId.trim() : '';
+    setTrackingInitialId(cleanId);
+    setIsTrackingOpen(true);
+  };
+
+  // Cryptographically secure GUID / UUID token for Admin Portal Access
+  const ADMIN_SECURE_TOKEN = '8f92a4e1-7c5b-4d63-91e8-2a0f6d3b4e71';
+
+  // Secret URL access handler: checks URL query params and path for the cryptographically secure token
   useEffect(() => {
     try {
+      const path = window.location.pathname.toLowerCase();
       const searchParams = new URLSearchParams(window.location.search);
-      const portalToken = searchParams.get('portal');
-      if (portalToken === 'admin' || portalToken === 'manage-cf-9x7q') {
+      const queryToken = searchParams.get('admin') || searchParams.get('portal') || searchParams.get('token') || searchParams.get('key');
+
+      const matchesToken = (t) => {
+        if (!t) return false;
+        const normalized = t.toLowerCase().trim();
+        return normalized === ADMIN_SECURE_TOKEN || normalized === `cf-admin-${ADMIN_SECURE_TOKEN}`;
+      };
+
+      const hasPathMatch = path.includes(ADMIN_SECURE_TOKEN) || path.includes(`cf-admin-${ADMIN_SECURE_TOKEN}`);
+      const hasQueryMatch = matchesToken(queryToken);
+
+      if (hasPathMatch || hasQueryMatch) {
         setIsAdminOpen(true);
-        window.history.replaceState({}, document.title, window.location.pathname);
+        // Instantly clean the browser address bar to protect the secure token from history and shoulder-surfing
+        window.history.replaceState({}, document.title, '/');
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Admin token check error:', e);
+    }
+  }, []);
+
+  // Emergency stealth keyboard shortcut for Admin (Ctrl + Shift + Alt + A)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.ctrlKey && e.shiftKey && e.altKey && (e.key === 'A' || e.key === 'a')) {
+        e.preventDefault();
+        const entered = window.prompt('CellFocus Security Portal — Enter Access Token:');
+        if (entered && (entered.trim() === ADMIN_SECURE_TOKEN || entered.trim() === `cf-admin-${ADMIN_SECURE_TOKEN}`)) {
+          setIsAdminOpen(true);
+        } else if (entered) {
+          alert('Access Denied: Invalid Security Token');
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   // Sync cart to localStorage
@@ -173,45 +217,50 @@ function App() {
 
   const handleAddToCart = (product, qty = 1) => {
     const pid = product.id || product._id;
+    const cartKey = product.selectedColor ? `${pid}::${product.selectedColor}` : String(pid);
     setCartItems((prev) => {
-      const existing = prev.find((item) => item.id === pid);
+      const existing = prev.find((item) => (item.cartKey || item.id) === cartKey);
       if (existing) {
         return prev.map((item) =>
-          item.id === pid ? { ...item, qty: item.qty + qty } : item
+          (item.cartKey || item.id) === cartKey ? { ...item, qty: item.qty + qty } : item
         );
       }
       return [
         ...prev,
         {
           id: pid,
+          cartKey,
           name: product.name,
           price: Number(product.price),
           image: product.image,
+          selectedColor: product.selectedColor || null,
           qty: qty
         }
       ];
     });
     setCartInitialStep('cart');
-    // Auto open cart drawer on add
-    setIsCartOpen(true);
+    // Silently added to cart without opening side drawer (cart badge updates in Navbar)
   };
 
   const handleBuyNow = (product, qty = 1) => {
     const pid = product.id || product._id;
+    const cartKey = product.selectedColor ? `${pid}::${product.selectedColor}` : String(pid);
     setCartItems((prev) => {
-      const existing = prev.find((item) => item.id === pid);
+      const existing = prev.find((item) => (item.cartKey || item.id) === cartKey);
       if (existing) {
         return prev.map((item) =>
-          item.id === pid ? { ...item, qty: item.qty + qty } : item
+          (item.cartKey || item.id) === cartKey ? { ...item, qty: item.qty + qty } : item
         );
       }
       return [
         ...prev,
         {
           id: pid,
+          cartKey,
           name: product.name,
           price: Number(product.price),
           image: product.image,
+          selectedColor: product.selectedColor || null,
           qty: qty
         }
       ];
@@ -233,7 +282,7 @@ function App() {
     setCartItems((prev) =>
       prev
         .map((item) => {
-          if (item.id === id) {
+          if ((item.cartKey || item.id) === id) {
             const newQty = item.qty + delta;
             return newQty > 0 ? { ...item, qty: newQty } : null;
           }
@@ -244,7 +293,7 @@ function App() {
   };
 
   const handleRemoveItem = (id) => {
-    setCartItems((prev) => prev.filter((item) => item.id !== id));
+    setCartItems((prev) => prev.filter((item) => (item.cartKey || item.id) !== id));
   };
 
   const handleClearCart = () => {
@@ -266,7 +315,9 @@ function App() {
   const totalCartCount = cartItems.reduce((acc, curr) => acc + curr.qty, 0);
 
   return (
-    <div className="min-h-screen bg-[#f7f4ec] text-[#1c1b18] flex flex-col font-sans selection:bg-[#e5e0d4] relative overflow-x-hidden">
+    <div className="min-h-screen bg-[#f7f4ec] text-[#1c1b18] flex flex-col font-sans selection:bg-[#e5e0d4] relative overflow-x-clip">
+      {/* Dynamic SEO Head with schema and meta tags */}
+      <SEOHead category={selectedCategory} product={detailProduct} />
       
       {/* Global Seamless Blended Background Aura across entire website */}
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
@@ -304,6 +355,7 @@ function App() {
                 setIsCartOpen(true);
               }}
               onOpenAdmin={() => setIsAdminOpen(true)}
+              onOpenTracking={handleOpenTracking}
             />
             <HeroSection onExploreCategory={handleCategorySelect} />
           </div>
@@ -327,6 +379,7 @@ function App() {
             onUpdateQty={handleUpdateQty}
             onRemoveItem={handleRemoveItem}
             onClearCart={handleClearCart}
+            onOpenTracking={handleOpenTracking}
           />
 
           {/* Dedicated Full Product Description / Specs / Policies Modal */}
@@ -343,6 +396,13 @@ function App() {
             isOpen={isAdminOpen}
             onClose={() => setIsAdminOpen(false)}
             onProductsChanged={() => setRefreshTrigger((prev) => prev + 1)}
+          />
+
+          {/* Customer Live Order Tracking Modal */}
+          <OrderTrackingModal
+            isOpen={isTrackingOpen}
+            onClose={() => setIsTrackingOpen(false)}
+            initialOrderId={trackingInitialId}
           />
 
           {/* Complete E-Commerce Storefront Footer */}

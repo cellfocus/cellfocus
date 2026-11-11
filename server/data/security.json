@@ -1,6 +1,9 @@
 {
-  "passcode": "!@#$%^&*()",
+  "passcode": "!!##%%",
   "mfaEnabled": false,
   "mfaSecret": null,
-  "tempMfaSecret": "A5LJKCM5C7F5LKUMDFBC2IYT7OGOYFEM"
+  "tempMfaSecret": "234QZHZK6PR3LGEP2YMG7FF5NEVMDOJU",
+  "resetOtp": null,
+  "resetOtpExpiresAt": null,
+  "passcodeResetAt": "2026-11-11T16:01:24.008Z"
 }

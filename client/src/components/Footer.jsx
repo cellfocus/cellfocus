@@ -15,7 +15,7 @@ import {
   Store,
   HelpCircle,
   Compass,
-  Shield
+  Boxes
 } from 'lucide-react';
 
 export default function Footer({ onCategoryClick, onOpenAdmin }) {
@@ -105,20 +105,38 @@ export default function Footer({ onCategoryClick, onOpenAdmin }) {
 
           {/* 1. Brand Col (lg:col-span-4) */}
           <div className="lg:col-span-4 space-y-4">
-            <div className="flex items-center gap-3">
+            <a
+              href="#"
+              onClick={(e) => { e.preventDefault(); scrollToTop(); }}
+              className="inline-flex items-center gap-3 group cursor-pointer"
+              aria-label="CellFocus Home"
+            >
               <img
-                src="/logo-full.png"
+                src="/logo-footer.png"
                 alt="CellFocus Crest"
-                className="h-10 w-auto object-contain filter drop-shadow-[0_0_10px_rgba(0,255,255,0.45)]"
+                className="h-11 sm:h-12 w-auto object-contain filter drop-shadow-[0_0_12px_rgba(0,255,255,0.45)] transition-transform duration-200 group-hover:scale-105"
               />
-              <span className="text-xl sm:text-2xl font-black tracking-wider text-[#00FFFF] font-sans">
-                CELLFOCUS
-              </span>
-            </div>
+              <img
+                src="/wordmark-footer.png"
+                alt="CELLFOCUS"
+                className="h-4 sm:h-5 w-auto object-contain transition-opacity duration-200 group-hover:opacity-90"
+              />
+            </a>
 
             <p className="text-xs sm:text-sm text-[#9ca3af] font-light leading-relaxed max-w-sm">
               Challenging overpriced mobile accessory trends for 15 years. Delivering exceptional, high-grade chargers, premium acoustics, and protective gear at consistently fair prices.
             </p>
+
+            {/* Official Tax & Legal Registration Badge */}
+            <div className="pt-1">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.1] text-[11px] text-[#cbd5e1] shadow-2xs">
+                <ShieldCheck className="w-4 h-4 text-[#00FFFF] shrink-0" />
+                <span>
+                  FBR Registered &bull; NTN:{' '}
+                  <strong className="text-white font-mono tracking-wider font-bold">1369148-4</strong>
+                </span>
+              </div>
+            </div>
           </div>
 
           {/* 2. CATALOG Col (lg:col-span-2) */}
@@ -222,6 +240,15 @@ export default function Footer({ onCategoryClick, onOpenAdmin }) {
               </li>
               <li>
                 <button
+                  onClick={() => handleScrollTo('bulk')}
+                  className="hover:text-white transition-colors cursor-pointer flex items-center gap-2"
+                >
+                  <Boxes className="w-3.5 h-3.5 text-[#00FFFF] shrink-0" />
+                  <span>Wholesale &amp; Bulk Orders</span>
+                </button>
+              </li>
+              <li>
+                <button
                   onClick={() => handleScrollTo('about-us')}
                   className="hover:text-white transition-colors cursor-pointer flex items-center gap-2"
                 >
@@ -291,24 +318,17 @@ export default function Footer({ onCategoryClick, onOpenAdmin }) {
           ref={bottomBarRef}
           className="pt-6 sm:pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#9ca3af]"
         >
-          <div className="flex items-center gap-2 font-mono text-[11px]">
+          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 font-mono text-[11px]">
             <span className="font-bold text-white tracking-wider">CELLFOCUS</span>
+            <span>&bull;</span>
+            <span className="text-[#cbd5e1]">
+              FBR (NTN): <strong className="text-[#00FFFF] font-mono">1369148-4</strong>
+            </span>
             <span>&bull;</span>
             <span>&copy; {new Date().getFullYear()} All Rights Reserved.</span>
           </div>
 
           <div className="flex items-center gap-5">
-            {onOpenAdmin && (
-              <button
-                onClick={onOpenAdmin}
-                className="text-xs text-[#9ca3af] hover:text-[#00FFFF] transition-colors cursor-pointer flex items-center gap-1.5"
-                title="Admin Management"
-              >
-                <Shield className="w-3.5 h-3.5 text-[#00FFFF]" />
-                <span>Admin Management</span>
-              </button>
-            )}
-
             <button
               onClick={scrollToTop}
               className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-white hover:bg-neutral-100 text-[#090b0e] font-semibold text-xs shadow-md transition-all cursor-pointer active:scale-95"

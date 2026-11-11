@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { 
+import {
+  MessageSquare, Star,
   X, Plus, Edit2, Trash2, Save, RefreshCw, Check, AlertCircle, 
   Package, ShoppingCart, Truck, Clock, CheckCircle, XCircle, Search, ChevronDown, User, Phone, MapPin, ArrowLeft,
   UploadCloud, Image as ImageIcon, Flame, Sparkles, Zap, ShieldCheck, Lock, Unlock, Key, Shield
 } from 'lucide-react';
 import defaultProducts from '../data/defaultProducts.json';
+import { API_BASE_URL, ENDPOINTS } from '../config/api';
 
-const API_PRODUCTS = 'http://localhost:5000/api/products';
-const API_ORDERS = 'http://localhost:5000/api/orders';
+const API_PRODUCTS = ENDPOINTS.PRODUCTS;
+const API_ORDERS = ENDPOINTS.ORDERS;
 const ADMIN_PASSCODE_KEY = 'cellfocus_admin_passcode';
 const DEFAULT_PASSCODE = 'cellfocus2026';
 
@@ -23,6 +25,105 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
   const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'products' | 'create'
   const [products, setProducts] = useState(defaultProducts || []);
   const [orders, setOrders] = useState([]);
+
+  // Client Reviews Management State
+  const [adminReviews, setAdminReviews] = useState([]);
+  const [reviewSearch, setReviewSearch] = useState('');
+  const [reviewRatingFilter, setReviewRatingFilter] = useState('all');
+  const [editingReview, setEditingReview] = useState(null);
+  const [inlineEditId, setInlineEditId] = useState(null);
+  const [inlineForm, setInlineForm] = useState(null);
+  const [isAddReviewOpen, setIsAddReviewOpen] = useState(false);
+  const [newReviewForm, setNewReviewForm] = useState({
+    name: '',
+    city: '',
+    rating: 5,
+    comment: '',
+    productName: '',
+    verified: true,
+  });
+
+  const fetchAdminReviews = async () => {
+    try {
+      const res = await fetch(ENDPOINTS.REVIEWS.GET);
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        setAdminReviews(json.data);
+      }
+    } catch (err) {
+      console.warn('Failed to load reviews:', err);
+    }
+  };
+
+  const handleSaveReview = async (e, customData) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const reviewData = customData || editingReview;
+    if (!reviewData) return;
+    const revId = reviewData.id || reviewData._id;
+    try {
+      const res = await fetch(ENDPOINTS.REVIEWS.UPDATE(revId), {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(reviewData),
+      });
+      const data = await res.json();
+      if (data.success && data.data) {
+        showToast('Client comment & review updated successfully!');
+        setAdminReviews((prev) =>
+          prev.map((r) => ((r.id || r._id) === revId ? data.data : r))
+        );
+        setEditingReview(null);
+        setInlineEditId(null);
+      } else {
+        showToast(data.message || 'Failed to update review', 'error');
+      }
+    } catch (err) {
+      showToast('Error updating review', 'error');
+    }
+  };
+
+  const handleDeleteReview = (revId, clientName) => {
+    if (!window.confirm(`Are you sure you want to permanently delete the review from "${clientName}"?`)) {
+      return;
+    }
+    fetch(ENDPOINTS.REVIEWS.DELETE(revId), {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          showToast('Review deleted successfully');
+          setAdminReviews((prev) => prev.filter((r) => (r.id || r._id) !== revId));
+        } else {
+          showToast(data.message || 'Failed to delete review', 'error');
+        }
+      })
+      .catch(() => showToast('Error deleting review', 'error'));
+  };
+
+  const handleAdminAddReview = async (e) => {
+    e.preventDefault();
+    if (!newReviewForm.comment.trim()) return;
+    try {
+      const res = await fetch(ENDPOINTS.REVIEWS.CREATE, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(newReviewForm),
+      });
+      const data = await res.json();
+      if (data.success && data.data) {
+        showToast('Client review added successfully!');
+        setAdminReviews((prev) => [data.data, ...prev]);
+        setIsAddReviewOpen(false);
+        setNewReviewForm({ name: '', city: '', rating: 5, comment: '', productName: '', verified: true });
+      } else {
+        showToast(data.message || 'Failed to add review', 'error');
+      }
+    } catch (err) {
+      showToast('Error adding review', 'error');
+    }
+  };
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [message, setMessage] = useState(null);
@@ -76,7 +177,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
   // Sync server security status
   const fetchSecurityStatus = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/admin/status');
+      const res = await fetch(`${API_BASE_URL}/api/admin/status`);
       const data = await res.json();
       if (data.success) {
         setMfaActive(Boolean(data.mfaEnabled));
@@ -483,7 +584,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     setAuthError(null);
 
     try {
-      const res = await fetch('http://localhost:5000/api/admin/login', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ passcode: entered }),
@@ -510,6 +611,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
       setIsAuthenticated(true);
       setPasscodeInput('');
       showToast('Admin Operations Hub unlocked.');
+      fetchAdminReviews();
       fetchOrders(data.token);
     } catch (err) {
       // Offline fallback
@@ -532,7 +634,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     }
 
     try {
-      const res = await fetch('http://localhost:5000/api/admin/mfa/verify', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/mfa/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
@@ -570,7 +672,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     }
 
     try {
-      const res = await fetch('http://localhost:5000/api/admin/change-passcode', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/change-passcode`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -600,7 +702,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
   // Start MFA Setup (Fetch QR Code)
   const handleStartMfaSetup = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/admin/mfa/setup');
+      const res = await fetch(`${API_BASE_URL}/api/admin/mfa/setup`);
       const data = await res.json();
       if (data.success) {
         setMfaSetupData(data);
@@ -623,7 +725,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     }
 
     try {
-      const res = await fetch('http://localhost:5000/api/admin/mfa/activate', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/mfa/activate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: mfaSetupCode.trim() }),
@@ -651,7 +753,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     if (!entered) return;
 
     try {
-      const res = await fetch('http://localhost:5000/api/admin/mfa/disable', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/mfa/disable`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ passcode: entered }),
@@ -780,7 +882,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
           )}
 
           <div className="pt-2 border-t border-[#232936] flex items-center justify-between text-xs text-[#6b7280]">
-            <span className="font-mono text-[11px]">Default: cellfocus2026</span>
+            <span className="text-[11px] text-[#6b7280]">CellFocus Protected Gateway</span>
             <button
               type="button"
               onClick={onClose}
@@ -901,6 +1003,21 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
         >
           <Plus className="w-4 h-4" />
           <span>{editingId ? 'Edit Product' : 'New Product'}</span>
+        </button>
+
+        <button
+          onClick={() => { setActiveTab('reviews'); fetchAdminReviews(); }}
+          className={`pb-3 px-3 sm:px-4 text-xs sm:text-sm font-semibold border-b-2 transition flex items-center gap-1.5 shrink-0 cursor-pointer ${
+            activeTab === 'reviews' 
+              ? 'border-[#1c1b18] text-[#1c1b18]' 
+              : 'border-transparent text-[#78746a] hover:text-[#1c1b18]'
+          }`}
+        >
+          <MessageSquare className="w-4 h-4 text-amber-600" />
+          <span>Client Reviews</span>
+          <span className="text-[11px] bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.2 rounded-full font-mono font-bold">
+            {adminReviews.length}
+          </span>
         </button>
 
         <button
@@ -1501,6 +1618,298 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
             </div>
           )}
 
+          {/* TAB: CLIENT REVIEWS CONTROL & MANAGEMENT SYSTEM */}
+          {activeTab === 'reviews' && (
+            <div className="space-y-4">
+              {/* Header Box */}
+              <div className="bg-white p-5 sm:p-6 rounded-2xl border border-[#e5e2d6] shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-300 text-amber-700 flex items-center justify-center shrink-0">
+                    <MessageSquare className="w-5 h-5 stroke-[1.8]" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-[#1c1b18] flex items-center gap-2">
+                      <span>Client Reviews &amp; Testimonials Hub</span>
+                      <span className="text-xs font-mono font-normal bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-200">
+                        {adminReviews.length} Reviews
+                      </span>
+                    </h2>
+                    <p className="text-xs text-[#78746a]">
+                      Control customer feedback &bull; Edit reviews &amp; comments &bull; Verify buyers &bull; Delete obsolete feedback
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={fetchAdminReviews}
+                    className="p-2 rounded-xl border border-[#dedad0] bg-[#faf9f5] hover:bg-white text-[#78746a] hover:text-[#1c1b18] transition cursor-pointer"
+                    title="Refresh Reviews"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddReviewOpen(true)}
+                    className="px-3.5 py-2 rounded-xl bg-[#1c1b18] hover:bg-[#32302b] text-[#f6f5f0] text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Review</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Filters Bar */}
+              <div className="bg-white p-3.5 rounded-2xl border border-[#e5e2d6] shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="relative w-full sm:w-72">
+                  <Search className="w-3.5 h-3.5 text-[#78746a] absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={reviewSearch}
+                    onChange={(e) => setReviewSearch(e.target.value)}
+                    placeholder="Search by customer, city, comment..."
+                    className="w-full text-xs pl-8 pr-3 py-1.5 rounded-lg border border-[#dedad0] bg-[#faf9f5] focus:bg-white focus:outline-none focus:border-[#1c1b18]"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
+                  <span className="text-[11px] font-semibold text-[#78746a] mr-1">Rating:</span>
+                  {['all', 5, 4, 3, 2, 1].map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setReviewRatingFilter(r)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                        reviewRatingFilter === r
+                          ? 'bg-[#1c1b18] text-white'
+                          : 'bg-[#faf9f5] hover:bg-[#eeebe2] text-[#4a473f] border border-[#dedad0]'
+                      }`}
+                    >
+                      {r === 'all' ? 'All' : `${r} ★`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Reviews List */}
+              {(() => {
+                const filtered = adminReviews.filter((rev) => {
+                  const matchSearch =
+                    !reviewSearch ||
+                    rev.name?.toLowerCase().includes(reviewSearch.toLowerCase()) ||
+                    rev.comment?.toLowerCase().includes(reviewSearch.toLowerCase()) ||
+                    rev.city?.toLowerCase().includes(reviewSearch.toLowerCase()) ||
+                    rev.productName?.toLowerCase().includes(reviewSearch.toLowerCase());
+                  const matchRating =
+                    reviewRatingFilter === 'all' || Number(rev.rating) === Number(reviewRatingFilter);
+                  return matchSearch && matchRating;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="bg-white p-8 rounded-2xl border border-[#e5e2d6] text-center space-y-2">
+                      <p className="text-sm font-semibold text-[#1c1b18]">No client reviews match your filter</p>
+                      <p className="text-xs text-[#78746a]">Try adjusting your search query or rating filter.</p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-3">
+                    {filtered.map((rev) => {
+                      const revId = rev.id || rev._id;
+                      return (
+                        <div
+                          key={revId}
+                          className="bg-white p-4 sm:p-5 rounded-2xl border border-[#e5e2d6] shadow-2xs hover:border-[#dedad0] transition space-y-3"
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                            <div className="flex items-start gap-3">
+                              <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-500 to-amber-700 text-white font-bold text-sm flex items-center justify-center shrink-0 shadow-xs">
+                                {(rev.name || 'C').charAt(0).toUpperCase()}
+                              </div>
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h3 className="text-xs sm:text-sm font-bold text-[#1c1b18]">{rev.name}</h3>
+                                  {rev.verified && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] text-teal-800 bg-teal-50 border border-teal-200 px-1.5 py-0.2 rounded font-semibold">
+                                      <ShieldCheck className="w-3 h-3 text-teal-600" />
+                                      <span>Verified Buyer</span>
+                                    </span>
+                                  )}
+                                  {rev.city && (
+                                    <span className="text-[11px] text-[#78746a] font-mono">
+                                      &bull; {rev.city}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-2 mt-1">
+                                  <div className="flex items-center text-amber-500">
+                                    {[1, 2, 3, 4, 5].map((star) => (
+                                      <Star
+                                        key={star}
+                                        className={`w-3.5 h-3.5 ${
+                                          star <= rev.rating ? 'fill-amber-400 text-amber-500' : 'text-neutral-300'
+                                        }`}
+                                      />
+                                    ))}
+                                  </div>
+                                  {rev.productName && (
+                                    <span className="text-[11px] font-semibold text-[#0d9488] bg-teal-50 px-2 py-0.5 rounded-full border border-teal-100">
+                                      {rev.productName}
+                                    </span>
+                                  )}
+                                  {rev.date && (
+                                    <span className="text-[10px] text-[#a09c91] font-mono">
+                                      {new Date(rev.date).toLocaleDateString()}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Action Buttons: Edit Comment & Delete */}
+                            <div className="flex items-center gap-2 self-end sm:self-start shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setInlineEditId(revId);
+                                  setInlineForm({ ...rev });
+                                  setEditingReview({ ...rev });
+                                }}
+                                className="px-3 py-1.5 rounded-lg border border-[#dedad0] bg-white hover:bg-[#faf9f5] text-[#1c1b18] text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                                title="Edit client comment, rating or details"
+                              >
+                                <Edit2 className="w-3.5 h-3.5 text-amber-600" />
+                                <span>Edit Comment</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteReview(revId, rev.name)}
+                                className="p-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 transition cursor-pointer"
+                                title="Delete Review"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Inline Editable or Display Client Comment Box */}
+                          {inlineEditId === revId ? (
+                            <div className="p-4 bg-amber-50/60 rounded-xl border-2 border-amber-300 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                                  <Edit2 className="w-3.5 h-3.5 text-amber-600" />
+                                  <span>Editing Client Comment &amp; Details</span>
+                                </span>
+                                <span className="text-[11px] text-amber-800 font-mono">Press Save when done</span>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-[#1c1b18] mb-0.5">Client Name</label>
+                                  <input
+                                    type="text"
+                                    value={inlineForm.name}
+                                    onChange={(e) => setInlineForm({ ...inlineForm, name: e.target.value })}
+                                    className="w-full text-xs p-2 rounded-lg border border-[#dedad0] bg-white text-[#1c1b18]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-[#1c1b18] mb-0.5">City</label>
+                                  <input
+                                    type="text"
+                                    value={inlineForm.city}
+                                    onChange={(e) => setInlineForm({ ...inlineForm, city: e.target.value })}
+                                    className="w-full text-xs p-2 rounded-lg border border-[#dedad0] bg-white text-[#1c1b18]"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-[#1c1b18] mb-0.5">Rating (1-5 Stars)</label>
+                                  <select
+                                    value={inlineForm.rating}
+                                    onChange={(e) => setInlineForm({ ...inlineForm, rating: Number(e.target.value) })}
+                                    className="w-full text-xs p-2 rounded-lg border border-[#dedad0] bg-white text-[#1c1b18]"
+                                  >
+                                    <option value={5}>★★★★★ (5 Stars)</option>
+                                    <option value={4}>★★★★☆ (4 Stars)</option>
+                                    <option value={3}>★★★☆☆ (3 Stars)</option>
+                                    <option value={2}>★★☆☆☆ (2 Stars)</option>
+                                    <option value={1}>★☆☆☆☆ (1 Star)</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-[#1c1b18] mb-0.5">Product</label>
+                                  <input
+                                    type="text"
+                                    value={inlineForm.productName}
+                                    onChange={(e) => setInlineForm({ ...inlineForm, productName: e.target.value })}
+                                    className="w-full text-xs p-2 rounded-lg border border-[#dedad0] bg-white text-[#1c1b18]"
+                                  />
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="block text-[11px] font-semibold text-[#1c1b18] mb-0.5">Client Comment (Editable)</label>
+                                <textarea
+                                  rows={3}
+                                  value={inlineForm.comment}
+                                  onChange={(e) => setInlineForm({ ...inlineForm, comment: e.target.value })}
+                                  className="w-full text-xs p-2.5 rounded-lg border border-[#dedad0] bg-white text-[#1c1b18] leading-relaxed"
+                                />
+                              </div>
+
+                              <div className="flex items-center justify-between pt-1">
+                                <label className="flex items-center gap-1.5 text-xs text-[#1c1b18] cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(inlineForm.verified)}
+                                    onChange={(e) => setInlineForm({ ...inlineForm, verified: e.target.checked })}
+                                    className="rounded text-teal-600"
+                                  />
+                                  <span>Verified Buyer badge</span>
+                                </label>
+
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setInlineEditId(null)}
+                                    className="px-3 py-1.5 rounded-lg border border-[#dedad0] bg-white hover:bg-[#faf9f5] text-xs font-semibold text-[#78746a] cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveReview(null, inlineForm)}
+                                    className="px-4 py-1.5 rounded-lg bg-[#1c1b18] hover:bg-[#32302b] text-white text-xs font-bold cursor-pointer flex items-center gap-1.5 shadow-xs"
+                                  >
+                                    <Save className="w-3.5 h-3.5" />
+                                    <span>Save Changes</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="p-3 bg-[#faf9f5] rounded-xl border border-[#eeebe2]">
+                              <p className="text-xs text-[#2b2923] leading-relaxed italic">
+                                &ldquo;{rev.comment}&rdquo;
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
           {/* TAB 4: MULTI-LAYER SECURITY & ACCESS CONTROL */}
           {activeTab === 'security' && (
             <div className="space-y-5">
@@ -1725,6 +2134,242 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
 
         </div>
       </div>
+
+
+      {/* Edit Client Review Modal */}
+      {editingReview && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-lg bg-[#f6f5f0] border border-[#dedad0] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 bg-white border-b border-[#dedad0] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-amber-600" />
+                <h3 className="text-sm font-bold text-[#1c1b18]">Edit Client Review &amp; Comment</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingReview(null)}
+                className="p-1 rounded-lg text-[#78746a] hover:text-[#1c1b18] hover:bg-[#eeebe2] transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveReview} className="p-6 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Client Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingReview.name || ''}
+                    onChange={(e) => setEditingReview({ ...editingReview, name: e.target.value })}
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#1c1b18] mb-1">City / Location</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingReview.city || ''}
+                    onChange={(e) => setEditingReview({ ...editingReview, city: e.target.value })}
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Rating</label>
+                  <select
+                    value={editingReview.rating || 5}
+                    onChange={(e) => setEditingReview({ ...editingReview, rating: Number(e.target.value) })}
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                  >
+                    <option value={5}>★★★★★ (5 Stars - Excellent)</option>
+                    <option value={4}>★★★★☆ (4 Stars - Good)</option>
+                    <option value={3}>★★★☆☆ (3 Stars - Average)</option>
+                    <option value={2}>★★☆☆☆ (2 Stars - Poor)</option>
+                    <option value={1}>★☆☆☆☆ (1 Star - Terrible)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Product Referenced</label>
+                  <input
+                    type="text"
+                    value={editingReview.productName || ''}
+                    onChange={(e) => setEditingReview({ ...editingReview, productName: e.target.value })}
+                    placeholder="e.g. CellFocus Cyber 65W GaN"
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#1c1b18] mb-1 flex items-center justify-between">
+                  <span>Client Comment &amp; Testimonial (Editable)</span>
+                  <span className="text-[11px] text-[#78746a] font-normal">Full editorial control</span>
+                </label>
+                <textarea
+                  rows={4}
+                  required
+                  value={editingReview.comment || ''}
+                  onChange={(e) => setEditingReview({ ...editingReview, comment: e.target.value })}
+                  placeholder="Enter or modify the customer's comment..."
+                  className="w-full text-xs p-3 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18] leading-relaxed"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="edit_verified_modal"
+                  checked={Boolean(editingReview.verified)}
+                  onChange={(e) => setEditingReview({ ...editingReview, verified: e.target.checked })}
+                  className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
+                />
+                <label htmlFor="edit_verified_modal" className="text-xs text-[#1c1b18] font-medium cursor-pointer">
+                  Display &ldquo;Verified Buyer&rdquo; badge
+                </label>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-[#dedad0]">
+                <button
+                  type="button"
+                  onClick={() => setEditingReview(null)}
+                  className="px-4 py-2 rounded-xl border border-[#dedad0] bg-white text-xs font-semibold text-[#78746a] hover:text-[#1c1b18] hover:bg-[#faf9f5] transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-[#1c1b18] hover:bg-[#32302b] text-white text-xs font-semibold transition cursor-pointer shadow-xs flex items-center gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Save Review Changes</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add New Review Modal */}
+      {isAddReviewOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-lg bg-[#f6f5f0] border border-[#dedad0] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 bg-white border-b border-[#dedad0] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Plus className="w-4 h-4 text-emerald-600" />
+                <h3 className="text-sm font-bold text-[#1c1b18]">Add Customer Testimonial</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddReviewOpen(false)}
+                className="p-1 rounded-lg text-[#78746a] hover:text-[#1c1b18] hover:bg-[#eeebe2] transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAdminAddReview} className="p-6 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Client Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={newReviewForm.name}
+                    onChange={(e) => setNewReviewForm({ ...newReviewForm, name: e.target.value })}
+                    placeholder="e.g. Hamza Tariq"
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#1c1b18] mb-1">City / Region</label>
+                  <input
+                    type="text"
+                    required
+                    value={newReviewForm.city}
+                    onChange={(e) => setNewReviewForm({ ...newReviewForm, city: e.target.value })}
+                    placeholder="e.g. Lahore, Karachi, Islamabad"
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Star Rating</label>
+                  <select
+                    value={newReviewForm.rating}
+                    onChange={(e) => setNewReviewForm({ ...newReviewForm, rating: Number(e.target.value) })}
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                  >
+                    <option value={5}>★★★★★ (5 Stars)</option>
+                    <option value={4}>★★★★☆ (4 Stars)</option>
+                    <option value={3}>★★★☆☆ (3 Stars)</option>
+                    <option value={2}>★★☆☆☆ (2 Stars)</option>
+                    <option value={1}>★☆☆☆☆ (1 Star)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Product (Optional)</label>
+                  <input
+                    type="text"
+                    value={newReviewForm.productName}
+                    onChange={(e) => setNewReviewForm({ ...newReviewForm, productName: e.target.value })}
+                    placeholder="e.g. CellFocus AirDots Pro 3"
+                    className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Customer Comment</label>
+                <textarea
+                  rows={4}
+                  required
+                  value={newReviewForm.comment}
+                  onChange={(e) => setNewReviewForm({ ...newReviewForm, comment: e.target.value })}
+                  placeholder="Type the customer's comment or feedback..."
+                  className="w-full text-xs p-3 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18] leading-relaxed"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="add_verified_modal"
+                  checked={newReviewForm.verified}
+                  onChange={(e) => setNewReviewForm({ ...newReviewForm, verified: e.target.checked })}
+                  className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
+                />
+                <label htmlFor="add_verified_modal" className="text-xs text-[#1c1b18] font-medium cursor-pointer">
+                  Mark as &ldquo;Verified Buyer&rdquo;
+                </label>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-[#dedad0]">
+                <button
+                  type="button"
+                  onClick={() => setIsAddReviewOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-[#dedad0] bg-white text-xs font-semibold text-[#78746a] hover:text-[#1c1b18] hover:bg-[#faf9f5] transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-[#1c1b18] hover:bg-[#32302b] text-white text-xs font-semibold transition cursor-pointer shadow-xs flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Publish Review</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

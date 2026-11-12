@@ -440,10 +440,10 @@ router.get('/whatsapp/status', requireAdminAuth, (req, res) => {
 });
 
 // POST Restart / Request fresh QR code (Admin Protected)
-router.post('/whatsapp/restart', requireAdminAuth, (req, res) => {
+router.post('/whatsapp/restart', requireAdminAuth, async (req, res) => {
   try {
-    baileysManager.init(true);
-    res.json({ success: true, message: 'WhatsApp bot connection restarted.' });
+    const result = await baileysManager.restart();
+    res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -463,7 +463,8 @@ router.post('/whatsapp/logout', requireAdminAuth, async (req, res) => {
 router.post('/whatsapp/test', requireAdminAuth, async (req, res) => {
   try {
     const { phone, message } = req.body;
-    const cleanPhone = whatsappService.cleanWhatsAppPhone(phone || baileysManager.connectedUser);
+    const fallbackUser = baileysManager.connectedUser || baileysManager.getStatus?.()?.connectedUser;
+    const cleanPhone = whatsappService.cleanWhatsAppPhone(phone || fallbackUser);
     if (!cleanPhone) {
       return res.status(400).json({ success: false, message: 'Valid phone number required.' });
     }

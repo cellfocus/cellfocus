@@ -632,8 +632,15 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
       });
       const data = await res.json();
       if (data.success) {
-        if ((newStatus === 'Dispatched' || newStatus === 'Return') && data.whatsappAutoSent === false) {
-          showToast(`Order #${orderId} marked as ${newStatus}. Auto-WhatsApp not linked (use Alerts tab QR or click WhatsApp button).`);
+        if (newStatus === 'Dispatched' || newStatus === 'Return') {
+          if (data.whatsappAutoSent) {
+            showToast(`Order #${orderId} marked as ${newStatus} & customer WhatsApp sent!`);
+          } else {
+            showToast(
+              `Order #${orderId} marked as ${newStatus}. Auto-WhatsApp not sent: ${data.whatsappReason || 'Bot not linked (check Alerts & Bot tab)'}`,
+              'error'
+            );
+          }
         } else {
           showToast(`Order #${orderId} marked as ${newStatus}`);
         }

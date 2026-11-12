@@ -164,8 +164,14 @@ async function startServer() {
   });
 
   // Graceful shutdown handling for PM2 and process monitors
-  const handleShutdown = (signal) => {
+  const handleShutdown = async (signal) => {
     console.log(`\n[Process] Received ${signal}. Initiating graceful shutdown...`);
+    try {
+      await baileysManager.shutdown();
+      console.log('[Baileys] WhatsApp socket and worker lock closed cleanly.');
+    } catch (e) {
+      console.error('[Baileys] Error during shutdown:', e);
+    }
     server.close(async () => {
       console.log('[Server] HTTP connections closed.');
       try {

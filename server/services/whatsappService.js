@@ -4,9 +4,9 @@
 const cleanWhatsAppPhone = (raw) => {
   if (!raw) return '';
   let digits = String(raw).replace(/\D/g, '');
-  if (digits.startsWith('0092')) digits = digits.substring(2);
+  if (digits.startsWith('00')) digits = digits.substring(2);
   if (digits.startsWith('920') && digits.length >= 13) digits = '92' + digits.substring(3);
-  if (digits.startsWith('0')) digits = '92' + digits.substring(1);
+  if (digits.startsWith('0') && digits.length >= 10 && digits.length <= 11) digits = '92' + digits.substring(1);
   if (digits.length === 10 && digits.startsWith('3')) digits = '92' + digits;
   return digits;
 };
@@ -62,28 +62,16 @@ const sendAutomatedWhatsApp = async (order, type = 'Placed') => {
 
   const message = formatOrderMessage(order, type);
 
-  // 1. Primary: Baileys Node.js Local Multi-Device Bot (100% Free, Automated)
+  // 1. Primary: Baileys Node.js Multi-Device Bot (supports multi-worker IPC + auto-reconnect)
+  let baileysFailureReason = null;
   if (baileysManager) {
-    if (baileysManager.status === 'disconnected' && baileysManager.getStatus?.().hasSession) {
-      console.log(`[WhatsApp] Session found on disk while disconnected; attempting auto-reconnect before dispatch...`);
-      await baileysManager.init();
-      await baileysManager.waitForConnection(6000);
-    } else if (baileysManager.status === 'connecting') {
-      console.log(`[WhatsApp] Baileys is connecting, waiting up to 8s...`);
-      await baileysManager.waitForConnection(8000);
+    const baileysRes = await baileysManager.sendTextMessage(phone, message);
+    if (baileysRes?.success) {
+      console.log(`[WhatsApp] Sent automatically via Baileys to +${phone} (Order #${order.orderId})`);
+      return { success: true, provider: 'baileys', data: baileysRes };
     }
-
-    if (baileysManager.status === 'connected') {
-      const baileysRes = await baileysManager.sendTextMessage(phone, message);
-      if (baileysRes.success) {
-        console.log(`[WhatsApp] Sent automatically via Baileys to +${phone} (Order #${order.orderId})`);
-        return { success: true, provider: 'baileys', data: baileysRes };
-      } else {
-        console.warn(`[WhatsApp] Baileys send attempt warning: ${baileysRes.reason || baileysRes.error}`);
-      }
-    } else {
-      console.warn(`[WhatsApp] Baileys bot is currently "${baileysManager.status}". Automatic message could not be sent hands-free.`);
-    }
+    baileysFailureReason = baileysRes?.reason || baileysRes?.error || null;
+    console.warn(`[WhatsApp] Baileys send attempt warning: ${baileysFailureReason || 'unknown error'}`);
   }
 
   // 1. Meta WhatsApp Cloud API (if configured)
@@ -139,16 +127,18 @@ const sendAutomatedWhatsApp = async (order, type = 'Placed') => {
   }
 
   // No active provider sent the message
-  const botStatus = baileysManager ? baileysManager.status : 'unavailable';
-  const lastErr = baileysManager?.lastError ? ` (${baileysManager.lastError})` : '';
+  const liveState = baileysManager?.getStatus?.() || { status: baileysManager?.status || 'unavailable', lastError: baileysManager?.lastError };
+  const botStatus = liveState.status || 'unavailable';
+  const lastErr = liveState.lastError ? ` (${liveState.lastError})` : '';
+  const finalReason = baileysFailureReason || `WhatsApp bot is ${botStatus}${lastErr}`;
   console.warn(
-    `[WhatsApp] Not sent automatically for Order #${order.orderId} (+${phone}) — Baileys status: ${botStatus}${lastErr}`
+    `[WhatsApp] Not sent automatically for Order #${order.orderId} (+${phone}) — ${finalReason}`
   );
 
   return {
     success: false,
     provider: 'none',
-    reason: `WhatsApp bot is ${botStatus}${lastErr}`,
+    reason: finalReason,
     phone,
     orderId: order.orderId,
     type,

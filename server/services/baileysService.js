@@ -63,7 +63,11 @@ if (
 
 const LOCK_FILE = path.join(AUTH_DIR, 'bot.lock');
 const STATUS_FILE = path.join(AUTH_DIR, 'bot_status.json');
-const INTERNAL_META_FILES = new Set(['bot.lock', 'bot_status.json']);
+const IPC_DIR = path.join(AUTH_DIR, '.ipc');
+const OUTBOX_DIR = path.join(IPC_DIR, 'outbox');
+const CMD_DIR = path.join(IPC_DIR, 'cmd');
+const RESULTS_DIR = path.join(IPC_DIR, 'results');
+const INTERNAL_META_FILES = new Set(['bot.lock', 'bot_status.json', '.ipc']);
 
 const SAFE_AUTH_FILENAME_RE = /^[a-zA-Z0-9._@-]+$/;
 
@@ -113,10 +117,31 @@ class BaileysManager {
     this.conflictDetected = false;
     this.reconnectTimer = null;
     this.watchdogTimer = null;
+    this.ipcTimer = null;
+    this.isProcessingIpc = false;
     this.isConnecting = false;
     this.initPromise = null;
     this.lastError = null;
     this.logger = pino({ level: 'silent' });
+  }
+
+  _ensureIpcDirs() {
+    for (const dir of [IPC_DIR, OUTBOX_DIR, CMD_DIR, RESULTS_DIR]) {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    }
+  }
+
+  _clearAuthFilesOnly() {
+    if (!fs.existsSync(AUTH_DIR)) {
+      fs.mkdirSync(AUTH_DIR, { recursive: true });
+      return;
+    }
+    for (const entry of fs.readdirSync(AUTH_DIR)) {
+      if (INTERNAL_META_FILES.has(entry)) continue;
+      fs.rmSync(path.join(AUTH_DIR, entry), { recursive: true, force: true });
+    }
   }
 
   _hasActiveSiblingWorker() {
@@ -168,8 +193,7 @@ class BaileysManager {
 
   _writeAuthFiles(fileMap) {
     const cleanFiles = sanitizeSessionFileMap(fileMap);
-    fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-    fs.mkdirSync(AUTH_DIR, { recursive: true });
+    this._clearAuthFilesOnly();
     const entries = Object.entries(cleanFiles);
     for (const [name, content] of entries) {
       fs.writeFileSync(path.join(AUTH_DIR, name), content, 'utf8');
@@ -236,6 +260,15 @@ class BaileysManager {
   }
 
   async importAuthState(payload) {
+    if (this._hasActiveSiblingWorker()) {
+      const ipcRes = await this._delegateToOwner('cmd', { action: 'importAuth', payload }, 20000);
+      if (ipcRes?.ok) return ipcRes.result;
+      if (ipcRes?.error) throw new Error(ipcRes.error);
+    }
+    return this._importAuthStateLocal(payload);
+  }
+
+  async _importAuthStateLocal(payload) {
     let fileMap = null;
     if (payload && typeof payload.archiveGzBase64 === 'string' && payload.archiveGzBase64.trim()) {
       const jsonStr = zlib.gunzipSync(Buffer.from(payload.archiveGzBase64.trim(), 'base64')).toString('utf8');
@@ -297,26 +330,169 @@ class BaileysManager {
     }
   }
 
+  _writeIpcResult(reqId, payload) {
+    try {
+      this._ensureIpcDirs();
+      const tmpPath = path.join(RESULTS_DIR, `${reqId}.tmp`);
+      const finalPath = path.join(RESULTS_DIR, `${reqId}.json`);
+      fs.writeFileSync(tmpPath, JSON.stringify(payload), 'utf8');
+      fs.renameSync(tmpPath, finalPath);
+    } catch (err) {
+      console.warn('[Baileys IPC] Failed to write IPC result:', err.message);
+    }
+  }
+
+  async _delegateToOwner(kind, payload, timeoutMs = 15000) {
+    this._ensureIpcDirs();
+    const id = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+    const targetDir = kind === 'cmd' ? CMD_DIR : OUTBOX_DIR;
+    const reqPath = path.join(targetDir, `${id}.json`);
+    const tmpReqPath = path.join(targetDir, `${id}.tmp`);
+    const resPath = path.join(RESULTS_DIR, `${id}.json`);
+
+    fs.writeFileSync(tmpReqPath, JSON.stringify({ id, ...payload, createdAt: Date.now() }), 'utf8');
+    fs.renameSync(tmpReqPath, reqPath);
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (fs.existsSync(resPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(resPath, 'utf8'));
+          fs.unlinkSync(resPath);
+          return parsed;
+        } catch {
+          // wait a tick if partially written
+        }
+      }
+      if (!this._hasActiveSiblingWorker()) {
+        // Owner exited or released lock; clean up pending request so caller can take over
+        try { if (fs.existsSync(reqPath)) fs.unlinkSync(reqPath); } catch { /* ignore */ }
+        return null;
+      }
+      await new Promise((r) => setTimeout(r, 120));
+    }
+
+    try { if (fs.existsSync(reqPath)) fs.unlinkSync(reqPath); } catch { /* ignore */ }
+    return { ok: false, error: 'Timed out waiting for primary WhatsApp worker response.' };
+  }
+
+  async _processIpcQueues() {
+    if (this.isProcessingIpc || this._hasActiveSiblingWorker()) return;
+    this.isProcessingIpc = true;
+    try {
+      this._ensureIpcDirs();
+
+      const cmdFiles = fs.readdirSync(CMD_DIR).filter((f) => f.endsWith('.json')).sort();
+      for (const file of cmdFiles) {
+        const fp = path.join(CMD_DIR, file);
+        let req;
+        try {
+          req = JSON.parse(fs.readFileSync(fp, 'utf8'));
+          fs.unlinkSync(fp);
+        } catch {
+          continue;
+        }
+        try {
+          let result;
+          if (req.action === 'restart') {
+            await this.init(true);
+            result = { success: true, message: 'WhatsApp bot connection restarted.' };
+          } else if (req.action === 'logout') {
+            result = await this._logoutLocal();
+          } else if (req.action === 'importAuth') {
+            result = await this._importAuthStateLocal(req.payload);
+          } else if (req.action === 'pairCode') {
+            result = await this._requestPairingCodeLocal(req.phone);
+          } else {
+            throw new Error(`Unknown IPC command: ${req.action}`);
+          }
+          this._writeIpcResult(req.id, { ok: true, result });
+        } catch (err) {
+          this._writeIpcResult(req.id, { ok: false, error: err.message });
+        }
+      }
+
+      const outboxFiles = fs.readdirSync(OUTBOX_DIR).filter((f) => f.endsWith('.json')).sort();
+      for (const file of outboxFiles) {
+        const fp = path.join(OUTBOX_DIR, file);
+        let req;
+        try {
+          req = JSON.parse(fs.readFileSync(fp, 'utf8'));
+          fs.unlinkSync(fp);
+        } catch {
+          continue;
+        }
+        try {
+          const result = await this._sendTextMessageLocal(req.cleanPhone, req.messageText);
+          this._writeIpcResult(req.id, { ok: true, result });
+        } catch (err) {
+          this._writeIpcResult(req.id, { ok: false, error: err.message });
+        }
+      }
+    } catch {
+      // ignore transient filesystem race errors
+    } finally {
+      this.isProcessingIpc = false;
+    }
+  }
+
+  _cleanupStaleIpcFiles() {
+    try {
+      const now = Date.now();
+      for (const dir of [OUTBOX_DIR, CMD_DIR, RESULTS_DIR]) {
+        if (!fs.existsSync(dir)) continue;
+        for (const f of fs.readdirSync(dir)) {
+          const fp = path.join(dir, f);
+          const stat = fs.statSync(fp);
+          if (now - stat.mtimeMs > 90000) {
+            fs.rmSync(fp, { force: true });
+          }
+        }
+      }
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+
+  startIpcLoop() {
+    if (this.ipcTimer) return;
+    const tick = async () => {
+      this.ipcTimer = null;
+      await this._processIpcQueues();
+      if (!this._hasActiveSiblingWorker()) {
+        this.ipcTimer = setTimeout(tick, 350);
+        if (typeof this.ipcTimer.unref === 'function') this.ipcTimer.unref();
+      }
+    };
+    this.ipcTimer = setTimeout(tick, 350);
+    if (typeof this.ipcTimer.unref === 'function') {
+      this.ipcTimer.unref();
+    }
+  }
+
   startWatchdog() {
+    this.startIpcLoop();
     if (this.watchdogTimer) return;
     this.watchdogTimer = setInterval(() => {
       try {
         if (this._hasActiveSiblingWorker()) return;
         this._refreshWorkerLockAndStatus();
+        this._cleanupStaleIpcFiles();
+        this.startIpcLoop();
         const hasCreds = fs.existsSync(path.join(AUTH_DIR, 'creds.json'));
         if (!hasCreds) return;
         const wsClosed = this.sock?.ws && this.sock.ws.isOpen === false;
         if (
           (this.status === 'connected' && wsClosed) ||
-          (this.status === 'disconnected' && !this.isConnecting && !this.reconnectTimer && !this.conflictDetected && this.replacedRetries < 1)
+          (this.status === 'disconnected' && !this.isConnecting && !this.reconnectTimer && !this.conflictDetected && this.replacedRetries < 2)
         ) {
           console.log('[Baileys Watchdog] Detected dropped socket while session exists — triggering clean auto-reconnect...');
-          this.init(true);
+          this.init(false);
         }
       } catch {
         // ignore watchdog errors
       }
-    }, 15000);
+    }, 10000);
     if (typeof this.watchdogTimer.unref === 'function') {
       this.watchdogTimer.unref();
     }
@@ -347,6 +523,13 @@ class BaileysManager {
     if (this.isConnecting && !force) {
       console.log('[Baileys] Connection initialization already in progress, skipping duplicate call.');
       return;
+    }
+
+    if (force) {
+      this.conflictDetected = false;
+      this.replacedRetries = 0;
+      this.reconnectAttempts = 0;
+      this.lastError = null;
     }
 
     this.isConnecting = true;
@@ -420,6 +603,7 @@ class BaileysManager {
           const statusCode = lastDisconnect?.error?.output?.statusCode;
           const isLoggedOut = statusCode === DisconnectReason?.loggedOut;
           const isReplaced = statusCode === DisconnectReason?.connectionReplaced || statusCode === 440;
+          const isRestartRequired = statusCode === DisconnectReason?.restartRequired || statusCode === 515;
           this.lastError = lastDisconnect?.error?.message
             ? `${lastDisconnect.error.message}${statusCode ? ` (code ${statusCode})` : ''}`
             : (statusCode ? `Disconnect code ${statusCode}` : 'Connection closed');
@@ -429,30 +613,36 @@ class BaileysManager {
           if (isLoggedOut) {
             console.log('[Baileys] Device logged out (401). Clearing auth directory to generate fresh QR...');
             try {
-              fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-              fs.mkdirSync(AUTH_DIR, { recursive: true });
+              this._clearAuthFilesOnly();
             } catch (rmErr) {
               console.error('[Baileys] Error clearing auth dir:', rmErr.message);
             }
             this.conflictDetected = false;
             this.pairingCode = null;
-            this.reconnectTimer = setTimeout(() => this.init(true), 2000);
+            this.reconnectTimer = setTimeout(() => this.init(false), 1500);
+          } else if (isRestartRequired) {
+            this.lastError = null;
+            this.reconnectAttempts = 0;
+            this.status = 'connecting';
+            console.log('[Baileys] Restart required (515) — reconnecting immediately in 400ms...');
+            this.reconnectTimer = setTimeout(() => this.init(false), 400);
           } else if (isReplaced) {
-            if (this.replacedRetries < 1) {
+            if (this.replacedRetries < 2) {
+              const waitMs = this.replacedRetries === 0 ? 5000 : 12000;
               this.replacedRetries++;
-              console.warn('[Baileys] Connection replaced (440) — waiting 15s once in case an old deployment worker is shutting down...');
-              this.reconnectTimer = setTimeout(() => this.init(true), 15000);
+              console.warn(`[Baileys] Connection replaced (440) — waiting ${waitMs / 1000}s in case an old deployment worker is shutting down...`);
+              this.reconnectTimer = setTimeout(() => this.init(false), waitMs);
             } else {
               this.conflictDetected = true;
               this.lastError = 'Another active server or session is using this same WhatsApp device ID (440 Conflict). Generate a fresh QR or 8-digit Pairing Code below to dedicate a new device slot to this server.';
               console.warn('[Baileys] Persistent 440 conflict detected — stopping auto-reconnect loop to prevent ping-pong kicks.');
             }
           } else {
-            // Transient network disconnect or code 515 restartRequired
+            // Transient network disconnect
             const delay = Math.min(15000, (this.reconnectAttempts + 1) * 2500);
             this.reconnectAttempts++;
             console.log(`[Baileys] Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts})...`);
-            this.reconnectTimer = setTimeout(() => this.init(true), delay);
+            this.reconnectTimer = setTimeout(() => this.init(false), delay);
           }
           this._refreshWorkerLockAndStatus();
         } else if (connection === 'open') {
@@ -521,11 +711,30 @@ class BaileysManager {
     };
   }
 
+  async restart() {
+    if (this._hasActiveSiblingWorker()) {
+      const ipcRes = await this._delegateToOwner('cmd', { action: 'restart' }, 15000);
+      if (ipcRes?.ok) return ipcRes.result;
+      if (ipcRes?.error) throw new Error(ipcRes.error);
+    }
+    await this.init(true);
+    return { success: true, message: 'WhatsApp bot connection restarted.' };
+  }
+
   async requestPairingCode(rawPhone) {
+    if (this._hasActiveSiblingWorker()) {
+      const ipcRes = await this._delegateToOwner('cmd', { action: 'pairCode', phone: rawPhone }, 15000);
+      if (ipcRes?.ok) return ipcRes.result;
+      if (ipcRes?.error) throw new Error(ipcRes.error);
+    }
+    return this._requestPairingCodeLocal(rawPhone);
+  }
+
+  async _requestPairingCodeLocal(rawPhone) {
     let digits = String(rawPhone || '').replace(/\D/g, '');
-    if (digits.startsWith('0092')) digits = digits.slice(2);
+    if (digits.startsWith('00')) digits = digits.slice(2);
     if (digits.startsWith('920') && digits.length >= 13) digits = '92' + digits.slice(3);
-    if (digits.startsWith('0')) digits = '92' + digits.slice(1);
+    if (digits.startsWith('0') && digits.length >= 10 && digits.length <= 11) digits = '92' + digits.slice(1);
     if (digits.length === 10 && digits.startsWith('3')) digits = '92' + digits;
     if (digits.length < 10) {
       throw new Error('Enter a valid WhatsApp phone number with country code (e.g. 03269589597 or 923269589597).');
@@ -533,8 +742,7 @@ class BaileysManager {
 
     await this.cleanupSocket();
     try {
-      fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-      fs.mkdirSync(AUTH_DIR, { recursive: true });
+      this._clearAuthFilesOnly();
     } catch {
       // ignore
     }
@@ -570,11 +778,18 @@ class BaileysManager {
   }
 
   async logout() {
+    if (this._hasActiveSiblingWorker()) {
+      const ipcRes = await this._delegateToOwner('cmd', { action: 'logout' }, 15000);
+      if (ipcRes?.ok) return ipcRes.result;
+      if (ipcRes?.error) throw new Error(ipcRes.error);
+    }
+    return this._logoutLocal();
+  }
+
+  async _logoutLocal() {
     await this.cleanupSocket();
-    this._clearWorkerLock();
     try {
-      fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-      fs.mkdirSync(AUTH_DIR, { recursive: true });
+      this._clearAuthFilesOnly();
     } catch (e) {
       // ignore
     }
@@ -586,29 +801,73 @@ class BaileysManager {
     this.lastError = null;
     this.reconnectAttempts = 0;
     this.replacedRetries = 0;
-    setTimeout(() => this.init(true), 1500);
+    this._refreshWorkerLockAndStatus();
+    setTimeout(() => this.init(true), 1200);
     return { success: true, message: 'Logged out successfully' };
   }
 
+  async shutdown() {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+    if (this.ipcTimer) {
+      clearTimeout(this.ipcTimer);
+      this.ipcTimer = null;
+    }
+    await this.cleanupSocket();
+    this._clearWorkerLock();
+  }
+
   async sendTextMessage(cleanPhone, messageText) {
-    if (this.status === 'connecting') {
-      console.log('[Baileys] Bot is connecting... waiting up to 5s before dispatching message.');
-      await this.waitForConnection(5000);
+    if (this._hasActiveSiblingWorker()) {
+      const ipcRes = await this._delegateToOwner('outbox', { cleanPhone, messageText }, 15000);
+      if (ipcRes?.ok) return ipcRes.result;
+      if (ipcRes?.error && this._hasActiveSiblingWorker()) {
+        return { success: false, reason: ipcRes.error };
+      }
+      // If sibling exited mid-wait, fall through and send locally
+    }
+    return this._sendTextMessageLocal(cleanPhone, messageText);
+  }
+
+  async _sendTextMessageLocal(cleanPhone, messageText) {
+    const hasCreds = fs.existsSync(path.join(AUTH_DIR, 'creds.json'));
+    if (this.status === 'disconnected' && hasCreds && !this.conflictDetected && !this.isConnecting) {
+      this.init(false);
+    }
+
+    if (this.status === 'connecting' || this.isConnecting || this.reconnectTimer || (this.status === 'disconnected' && hasCreds && !this.conflictDetected)) {
+      console.log('[Baileys] Bot is connecting/reconnecting... waiting up to 10s before dispatching message.');
+      await this.waitForConnection(10000);
+    }
+
+    if (this.status === 'connected' && this.sock?.ws && this.sock.ws.isOpen === false) {
+      console.log('[Baileys] Detected closed WebSocket before send — reconnecting cleanly...');
+      await this.init(true);
+      await this.waitForConnection(8000);
     }
 
     if (!this.sock || this.status !== 'connected') {
-      console.warn(`[Baileys] Cannot send: WhatsApp bot not connected (current status: ${this.status})`);
-      return { success: false, reason: `WhatsApp bot is ${this.status}. Please check WhatsApp tab in Admin Panel.` };
+      const liveStatus = this.getStatus();
+      console.warn(`[Baileys] Cannot send: WhatsApp bot not connected (current status: ${liveStatus.status})`);
+      return {
+        success: false,
+        reason: liveStatus.lastError
+          ? `WhatsApp bot is ${liveStatus.status} (${liveStatus.lastError})`
+          : `WhatsApp bot is ${liveStatus.status}. Please check Alerts & Bot tab in Admin Panel.`,
+      };
     }
 
-    try {
-      let targetJid = `${cleanPhone}@s.whatsapp.net`;
+    const fallbackJid = `${cleanPhone}@s.whatsapp.net`;
+    let targetJid = fallbackJid;
 
+    try {
       // Verify and resolve official JID with onWhatsApp if available
       try {
         if (typeof this.sock.onWhatsApp === 'function') {
           const results = await this.sock.onWhatsApp(cleanPhone);
-          if (Array.isArray(results) && results.length > 0 && results[0]?.exists) {
+          if (Array.isArray(results) && results.length > 0 && results[0]?.exists && results[0]?.jid) {
             targetJid = results[0].jid;
             console.log(`[Baileys] Verified WhatsApp target for ${cleanPhone}: ${targetJid}`);
           }
@@ -617,12 +876,24 @@ class BaileysManager {
         console.warn(`[Baileys] onWhatsApp lookup notice: ${chkErr.message}`);
       }
 
-      const result = await this.sock.sendMessage(targetJid, { text: messageText });
+      let result;
+      try {
+        result = await this.sock.sendMessage(targetJid, { text: messageText });
+      } catch (primaryErr) {
+        if (targetJid !== fallbackJid) {
+          console.warn(`[Baileys] Send via ${targetJid} failed (${primaryErr.message}); retrying fallback ${fallbackJid}...`);
+          result = await this.sock.sendMessage(fallbackJid, { text: messageText });
+          targetJid = fallbackJid;
+        } else {
+          throw primaryErr;
+        }
+      }
+
       console.log(`[Baileys] Message sent successfully to ${targetJid} (Message ID: ${result?.key?.id})`);
       return { success: true, messageId: result?.key?.id, to: targetJid };
     } catch (err) {
       console.error(`[Baileys] Failed to send message to ${cleanPhone}:`, err.message);
-      return { success: false, error: err.message };
+      return { success: false, reason: err.message, error: err.message };
     }
   }
 }

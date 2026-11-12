@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Trash2, Plus, Minus, ArrowRight, ShoppingBag, CheckCircle2, User, Phone, MapPin, Mail, MessageCircle, Truck } from 'lucide-react';
+import { X, Trash2, Plus, Minus, ArrowRight, ShoppingBag, CheckCircle2, User, Phone, MapPin, Mail, Truck } from 'lucide-react';
 import { useCurrency } from '../context/CurrencyContext';
 import { ENDPOINTS } from '../config/api';
 
@@ -193,18 +193,6 @@ export default function CartDrawer({
                 )}
 
                 <div className="w-full space-y-2">
-                  {placedOrder.whatsappNoticeUrl && !placedOrder.whatsappAutoSent && (
-                    <a
-                      href={placedOrder.whatsappNoticeUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer transition flex items-center justify-center gap-1.5"
-                    >
-                      <MessageCircle className="w-4 h-4" />
-                      <span>Confirm Order on WhatsApp</span>
-                    </a>
-                  )}
-
                   <button
                     type="button"
                     onClick={() => {

@@ -64,9 +64,13 @@ const sendAutomatedWhatsApp = async (order, type = 'Placed') => {
 
   // 1. Primary: Baileys Node.js Local Multi-Device Bot (100% Free, Automated)
   if (baileysManager) {
-    if (baileysManager.status === 'connecting') {
-      console.log(`[WhatsApp] Baileys is connecting, waiting up to 4s...`);
-      await baileysManager.waitForConnection(4000);
+    if (baileysManager.status === 'disconnected' && baileysManager.getStatus?.().hasSession) {
+      console.log(`[WhatsApp] Session found on disk while disconnected; attempting auto-reconnect before dispatch...`);
+      await baileysManager.init();
+      await baileysManager.waitForConnection(6000);
+    } else if (baileysManager.status === 'connecting') {
+      console.log(`[WhatsApp] Baileys is connecting, waiting up to 8s...`);
+      await baileysManager.waitForConnection(8000);
     }
 
     if (baileysManager.status === 'connected') {

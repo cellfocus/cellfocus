@@ -1,22 +1,64 @@
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const zlib = require('zlib');
 const QRCode = require('qrcode');
 const pino = require('pino');
 
-let makeWASocket, useMultiFileAuthState, DisconnectReason;
+let makeWASocket, useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, Browsers;
 try {
   const baileys = require('@whiskeysockets/baileys');
   makeWASocket = baileys.default || baileys.makeWASocket;
   useMultiFileAuthState = baileys.useMultiFileAuthState;
   DisconnectReason = baileys.DisconnectReason;
+  makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore;
+  fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
+  Browsers = baileys.Browsers;
 } catch (e) {
   console.error('[Baileys] Error importing @whiskeysockets/baileys:', e.message);
 }
 
-const AUTH_DIR = path.join(__dirname, '..', 'data', 'baileys_auth');
+const LEGACY_AUTH_DIR = path.join(__dirname, '..', 'data', 'baileys_auth');
+
+function resolveAuthDir() {
+  if (process.env.WHATSAPP_AUTH_DIR) {
+    return path.resolve(process.env.WHATSAPP_AUTH_DIR);
+  }
+  // In Linux production (Hostinger), store session outside the git deploy folder so code pushes don't wipe it
+  if (process.env.NODE_ENV === 'production' && process.platform !== 'win32') {
+    const persistentDir = path.join(os.homedir(), '.cellfocus_baileys_auth');
+    try {
+      fs.mkdirSync(persistentDir, { recursive: true });
+      return persistentDir;
+    } catch {
+      // Fallback to workspace data dir
+    }
+  }
+  return LEGACY_AUTH_DIR;
+}
+
+const AUTH_DIR = resolveAuthDir();
 if (!fs.existsSync(AUTH_DIR)) {
   fs.mkdirSync(AUTH_DIR, { recursive: true });
+}
+
+// Migrate legacy workspace session into persistent home dir once if needed
+if (
+  AUTH_DIR !== LEGACY_AUTH_DIR &&
+  !fs.existsSync(path.join(AUTH_DIR, 'creds.json')) &&
+  fs.existsSync(path.join(LEGACY_AUTH_DIR, 'creds.json'))
+) {
+  try {
+    for (const f of fs.readdirSync(LEGACY_AUTH_DIR)) {
+      const src = path.join(LEGACY_AUTH_DIR, f);
+      if (fs.statSync(src).isFile()) {
+        fs.copyFileSync(src, path.join(AUTH_DIR, f));
+      }
+    }
+    console.log(`[Baileys] Migrated existing session into persistent path: ${AUTH_DIR}`);
+  } catch (err) {
+    console.warn('[Baileys] Session migration warning:', err.message);
+  }
 }
 
 const SAFE_AUTH_FILENAME_RE = /^[a-zA-Z0-9._@-]+$/;
@@ -51,7 +93,9 @@ class BaileysManager {
     this.rawQR = null;
     this.connectedUser = null;
     this.reconnectAttempts = 0;
+    this.replacedRetries = 0;
     this.reconnectTimer = null;
+    this.watchdogTimer = null;
     this.isConnecting = false;
     this.lastError = null;
     this.logger = pino({ level: 'silent' });
@@ -83,17 +127,34 @@ class BaileysManager {
     }
   }
 
-  exportAuthState() {
+  exportAuthState({ compact = false } = {}) {
     if (!fs.existsSync(AUTH_DIR)) {
       throw new Error('WhatsApp auth directory does not exist.');
     }
     const entries = fs.readdirSync(AUTH_DIR);
     const fileMap = {};
+
+    const preKeyNums = entries
+      .filter((f) => f.startsWith('pre-key-') && f.endsWith('.json'))
+      .map((f) => ({ f, n: parseInt(f.slice(8, -5), 10) || 0 }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 20)
+      .map((x) => x.f);
+    const keepPreKeys = new Set(preKeyNums);
+
     for (const name of entries) {
       const fp = path.join(AUTH_DIR, name);
-      if (fs.statSync(fp).isFile() && SAFE_AUTH_FILENAME_RE.test(name)) {
-        fileMap[name] = fs.readFileSync(fp, 'utf8');
+      if (!fs.statSync(fp).isFile() || !SAFE_AUTH_FILENAME_RE.test(name)) continue;
+      if (compact) {
+        const isEssential =
+          name === 'creds.json' ||
+          name.startsWith('app-state-sync-key-') ||
+          name.startsWith('sender-key-memory-') ||
+          name.startsWith('device-list-') ||
+          keepPreKeys.has(name);
+        if (!isEssential) continue;
       }
+      fileMap[name] = fs.readFileSync(fp, 'utf8');
     }
     if (!fileMap['creds.json']) {
       throw new Error('No linked WhatsApp session (creds.json) found to export.');
@@ -101,7 +162,7 @@ class BaileysManager {
     const creds = JSON.parse(fileMap['creds.json']);
     const gzBuffer = zlib.gzipSync(Buffer.from(JSON.stringify(fileMap), 'utf8'));
     return {
-      format: 'baileys-gz-v1',
+      format: compact ? 'baileys-compact-gz-v1' : 'baileys-gz-v1',
       exportedAt: new Date().toISOString(),
       connectedUser: this.connectedUser || (creds?.me?.id ? String(creds.me.id).split(':')[0] : null),
       fileCount: Object.keys(fileMap).length,
@@ -127,6 +188,7 @@ class BaileysManager {
     this.rawQR = null;
     this.connectedUser = null;
     this.reconnectAttempts = 0;
+    this.replacedRetries = 0;
 
     const importedFiles = this._writeAuthFiles(fileMap);
     console.log(`[Baileys] Imported ${importedFiles} existing WhatsApp session files. Connecting...`);
@@ -162,6 +224,26 @@ class BaileysManager {
     }
   }
 
+  startWatchdog() {
+    if (this.watchdogTimer) return;
+    this.watchdogTimer = setInterval(() => {
+      try {
+        const hasCreds = fs.existsSync(path.join(AUTH_DIR, 'creds.json'));
+        if (!hasCreds) return;
+        const wsClosed = this.sock?.ws && this.sock.ws.isOpen === false;
+        if ((this.status === 'connected' && wsClosed) || (this.status === 'disconnected' && !this.isConnecting && !this.reconnectTimer && this.replacedRetries < 3)) {
+          console.log('[Baileys Watchdog] Detected dropped socket while session exists — triggering clean auto-reconnect...');
+          this.init(true);
+        }
+      } catch {
+        // ignore watchdog errors
+      }
+    }, 45000);
+    if (typeof this.watchdogTimer.unref === 'function') {
+      this.watchdogTimer.unref();
+    }
+  }
+
   async init(force = false) {
     if (!makeWASocket || !useMultiFileAuthState) {
       console.error('[Baileys] Module not properly loaded.');
@@ -181,17 +263,37 @@ class BaileysManager {
       this.status = 'connecting';
       const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
+      let waVersion;
+      try {
+        if (typeof fetchLatestBaileysVersion === 'function') {
+          const vRes = await fetchLatestBaileysVersion();
+          if (Array.isArray(vRes?.version)) waVersion = vRes.version;
+        }
+      } catch {
+        // fallback to packaged version
+      }
+
+      const authKeys = typeof makeCacheableSignalKeyStore === 'function'
+        ? makeCacheableSignalKeyStore(state.keys, this.logger)
+        : state.keys;
+
       this.sock = makeWASocket({
-        auth: state,
+        ...(waVersion ? { version: waVersion } : {}),
+        auth: {
+          creds: state.creds,
+          keys: authKeys,
+        },
         logger: this.logger,
         printQRInTerminal: true,
-        browser: ['CellFocus Store', 'Chrome', '1.0.0'],
+        browser: typeof Browsers?.ubuntu === 'function' ? Browsers.ubuntu('Chrome') : ['CellFocus Store', 'Chrome', '128.0.0'],
         syncFullHistory: false,
-        markOnlineOnConnect: true,
+        markOnlineOnConnect: false,
         connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 25000,
       });
 
+      this.startWatchdog();
       this.sock.ev.on('creds.update', saveCreds);
 
       this.sock.ev.on('connection.update', async (update) => {
@@ -229,7 +331,7 @@ class BaileysManager {
           console.log(`[Baileys] Connection closed. Reason code: ${statusCode}. Logged out? ${isLoggedOut}. Replaced? ${isReplaced}`);
 
           if (isLoggedOut) {
-            console.log('[Baileys] Device logged out. Clearing auth directory to generate fresh QR...');
+            console.log('[Baileys] Device logged out (401). Clearing auth directory to generate fresh QR...');
             try {
               fs.rmSync(AUTH_DIR, { recursive: true, force: true });
               fs.mkdirSync(AUTH_DIR, { recursive: true });
@@ -238,11 +340,17 @@ class BaileysManager {
             }
             this.reconnectTimer = setTimeout(() => this.init(true), 2000);
           } else if (isReplaced) {
-            console.warn('[Baileys] Connection was replaced by another session (Code 440). Halting auto-reconnect loop to prevent collisions.');
-            console.warn('[Baileys] Click "Restart WhatsApp Bot" in the Admin Panel whenever you wish to reconnect.');
+            if (this.replacedRetries < 3) {
+              const waitMs = 12000 * (this.replacedRetries + 1);
+              this.replacedRetries++;
+              console.warn(`[Baileys] Connection replaced (440) — waiting ${waitMs / 1000}s before recovery retry ${this.replacedRetries}/3 (handles server restarts cleanly)...`);
+              this.reconnectTimer = setTimeout(() => this.init(true), waitMs);
+            } else {
+              console.warn('[Baileys] Repeated 440 collision detected. Halting auto-reconnect until manual Restart in Admin Panel.');
+            }
           } else {
             // Transient network disconnect or code 515 restartRequired
-            const delay = Math.min(10000, (this.reconnectAttempts + 1) * 2000);
+            const delay = Math.min(15000, (this.reconnectAttempts + 1) * 2500);
             this.reconnectAttempts++;
             console.log(`[Baileys] Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts})...`);
             this.reconnectTimer = setTimeout(() => this.init(true), delay);
@@ -254,6 +362,7 @@ class BaileysManager {
           this.rawQR = null;
           this.lastError = null;
           this.reconnectAttempts = 0;
+          this.replacedRetries = 0;
 
           const userJid = this.sock.user?.id || '';
           const phone = userJid.split(':')[0] || userJid.split('@')[0];

@@ -492,7 +492,8 @@ router.post('/whatsapp/resend/:orderId', requireAdminAuth, async (req, res) => {
 // GET Export Linked WhatsApp Session Backup (Admin Protected)
 router.get('/whatsapp/export-auth', requireAdminAuth, (req, res) => {
   try {
-    const bundle = baileysManager.exportAuthState();
+    const compact = req.query.compact === '1' || req.query.compact === 'true';
+    const bundle = baileysManager.exportAuthState({ compact });
     res.json({ success: true, data: bundle });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });

@@ -476,6 +476,26 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     }
   };
 
+  const handleWaCopyEnvToken = async () => {
+    setWaBusy(true);
+    try {
+      const res = await fetch(`${ENDPOINTS.ADMIN.WHATSAPP.EXPORT_AUTH}?compact=1`, {
+        headers: getAuthOnlyHeaders(),
+      });
+      const json = await res.json();
+      if (!json.success || !json.data?.archiveGzBase64) {
+        showToast(json.message || 'Connect WhatsApp first to copy env key', 'error');
+        return;
+      }
+      await navigator.clipboard.writeText(json.data.archiveGzBase64);
+      showToast('Copied WHATSAPP_AUTH_GZ_B64 value! Add it in Hostinger hPanel Env Vars so future deploys stay connected.');
+    } catch (err) {
+      showToast('Failed to copy WHATSAPP_AUTH_GZ_B64: ' + err.message, 'error');
+    } finally {
+      setWaBusy(false);
+    }
+  };
+
   const handleSaveEmailConfig = async (e) => {
     e.preventDefault();
     setEmailBusy(true);
@@ -2308,6 +2328,16 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>Backup Session</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={waBusy}
+                    onClick={handleWaCopyEnvToken}
+                    className="px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    title="Copies compact ~4KB session value for Hostinger WHATSAPP_AUTH_GZ_B64 env var"
+                  >
+                    <Key className="w-3.5 h-3.5" />
+                    <span>Copy Persistent Env Key</span>
                   </button>
                   {waStatus.status === 'connected' && (
                     <button

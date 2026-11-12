@@ -274,7 +274,7 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
           ) : (
             <>
               <Plus className="w-3.5 h-3.5" />
-              <span className="text-[11px] sm:text-xs">Add to cart</span>
+              <span className="text-[11px] sm:text-xs">Buy Now</span>
             </>
           )}
         </button>

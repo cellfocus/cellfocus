@@ -10,8 +10,6 @@ import { API_BASE_URL, ENDPOINTS } from '../config/api';
 
 const API_PRODUCTS = ENDPOINTS.PRODUCTS;
 const API_ORDERS = ENDPOINTS.ORDERS;
-const ADMIN_PASSCODE_KEY = 'cellfocus_admin_passcode';
-const DEFAULT_PASSCODE = 'cellfocus2026';
 
 const STATUS_CONFIG = {
   Pending: { bg: 'bg-amber-50 text-amber-800 border-amber-300', icon: Clock },
@@ -132,14 +130,8 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
   const [orderFilter, setOrderFilter] = useState('all');
   const [orderSearch, setOrderSearch] = useState('');
 
-  // Admin Access & Multi-Factor Authentication (MFA) State
-  const [adminPasscode, setAdminPasscode] = useState(() => {
-    try {
-      return localStorage.getItem(ADMIN_PASSCODE_KEY) || DEFAULT_PASSCODE;
-    } catch (e) {
-      return DEFAULT_PASSCODE;
-    }
-  });
+  // Admin Access & Multi-Factor Authentication (MFA) State (in-memory only)
+  const [sessionPasscode, setSessionPasscode] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passcodeInput, setPasscodeInput] = useState('');
   const [authError, setAuthError] = useState(null);
@@ -186,6 +178,19 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     } catch (err) {
       console.warn('Could not sync admin security status:', err);
     }
+  };
+
+  const lockAdminSession = (toastMsg = 'Admin Hub locked.') => {
+    setIsAuthenticated(false);
+    setAdminToken('');
+    setSessionPasscode('');
+    setRequireMfaPrompt(false);
+    setPasscodeInput('');
+    setTotpCodeInput('');
+    try {
+      sessionStorage.removeItem('cf_admin_token');
+    } catch (e) {}
+    if (toastMsg) showToast(toastMsg);
   };
 
   // Lock when panel is opened
@@ -589,12 +594,18 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ passcode: entered }),
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(`API unavailable (HTTP ${res.status})`);
+      }
       const data = await res.json();
 
       if (!res.ok || !data.success) {
         setAuthError(data.message || 'Invalid Master Passcode.');
         return;
       }
+
+      setSessionPasscode(entered);
 
       if (data.requireMfa) {
         setRequireMfaPrompt(true);
@@ -614,13 +625,12 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
       fetchAdminReviews();
       fetchOrders(data.token);
     } catch (err) {
-      // Offline fallback
-      if (entered === adminPasscode || entered === DEFAULT_PASSCODE) {
+      if (import.meta.env.DEV && entered === 'cellfocus2026') {
         setIsAuthenticated(true);
         setPasscodeInput('');
-        showToast('Admin Operations Hub unlocked (Local Verification).');
+        showToast('Admin Hub unlocked (Dev Offline Mode).');
       } else {
-        setAuthError('Invalid Master Passcode.');
+        setAuthError('Admin API unreachable. Ensure the backend server is running and /api is configured.');
       }
     }
   };
@@ -671,12 +681,15 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
       return;
     }
 
+    const currentCode = sessionPasscode || window.prompt('Enter your current Master Admin Passcode to confirm:') || '';
+    if (!currentCode) return;
+
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/change-passcode`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
-          currentPasscode: adminPasscode,
+          currentPasscode: currentCode,
           newPasscode: newCode,
         }),
       });
@@ -685,24 +698,18 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
         showToast(data.message || 'Could not update passcode', 'error');
         return;
       }
+      setSessionPasscode(newCode);
+      setNewPasscodeInput('');
+      showToast('Master Admin Passcode updated successfully!');
     } catch (err) {
-      console.warn('Backend update error, saving locally:', err);
+      showToast('Could not reach backend to update passcode.', 'error');
     }
-
-    setAdminPasscode(newCode);
-    try {
-      localStorage.setItem(ADMIN_PASSCODE_KEY, newCode);
-    } catch (err) {
-      console.warn('Failed to save passcode:', err);
-    }
-    setNewPasscodeInput('');
-    showToast('Master Admin Passcode updated successfully!');
   };
 
   // Start MFA Setup (Fetch QR Code)
   const handleStartMfaSetup = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/mfa/setup`);
+      const res = await fetch(`${API_BASE_URL}/api/admin/mfa/setup`, { headers: getAuthOnlyHeaders() });
       const data = await res.json();
       if (data.success) {
         setMfaSetupData(data);
@@ -727,7 +734,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/mfa/activate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ token: mfaSetupCode.trim() }),
       });
       const data = await res.json();
@@ -755,7 +762,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/mfa/disable`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ passcode: entered }),
       });
       const data = await res.json();
@@ -925,10 +932,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
 
           <button
             type="button"
-            onClick={() => {
-              setIsAuthenticated(false);
-              showToast('Admin Hub locked.');
-            }}
+            onClick={() => lockAdminSession('Admin Hub locked.')}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber-200 bg-amber-50 hover:bg-amber-100 text-[11px] font-bold text-amber-900 transition shadow-xs cursor-pointer"
             title="Lock Admin Panel"
           >
@@ -2028,10 +2032,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
 
                   <button
                     type="button"
-                    onClick={() => {
-                      setIsAuthenticated(false);
-                      showToast('Session locked.');
-                    }}
+                    onClick={() => lockAdminSession('Session locked.')}
                     className="px-4 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold rounded-xl transition cursor-pointer self-start sm:self-auto"
                   >
                     Lock Session Now

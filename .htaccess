@@ -1,0 +1,51 @@
+# =============================================================================
+# CellFocus Production Apache / LiteSpeed Configuration (Hostinger hPanel)
+# Enables SPA routing (/admin, /cf-admin), HTTPS enforcement, and file hardening
+# =============================================================================
+
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # 1. Enforce HTTPS
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https [NC]
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+  # 2. Block direct web access to backend source, deployment scripts, and dotfiles
+  RewriteRule ^(server|deploy|client|scratch|node_modules|\.git)(/|$) - [F,L,NC]
+  RewriteRule ^(\.env|ecosystem\.config\.js|package(-lock)?\.json) - [F,L,NC]
+
+  # 3. Pass through existing static files and directories (and /api if proxied)
+  RewriteCond %{REQUEST_URI} ^/api/ [NC,OR]
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # 4. SPA Fallback: route /admin, /cf-admin, and deep links to index.html
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# Block sensitive extensions globally
+<FilesMatch "\.(env|log|sh|md|bak|sql|sqlite|ya?ml)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# Security headers & prevent search engine indexing of Admin routes
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  <If "%{REQUEST_URI} =~ m#^/(cf-)?admin#i || %{QUERY_STRING} =~ m#(^|&)admin(=|&|$)#i">
+    Header always set X-Robots-Tag "noindex, nofollow, noarchive"
+    Header always set Cache-Control "no-store, no-cache, must-revalidate, private"
+  </If>
+</IfModule>

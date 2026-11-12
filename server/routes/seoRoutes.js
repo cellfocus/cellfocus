@@ -161,7 +161,7 @@ router.get('/sitemap.xml', async (req, res) => {
  * Dynamic robots.txt endpoint
  */
 router.get('/robots.txt', (req, res) => {
-  const baseUrl = process.env.SITE_URL || 'https://cellfocus.pk';
+  const baseUrl = process.env.SITE_URL || 'https://www.cellfocusaccessories.com';
   const robots = `# ==========================================
 # Robots.txt for CellFocus Pakistan
 # Website: ${baseUrl}/
@@ -180,6 +180,7 @@ Allow: /sitemap.xml
 
 # Block internal admin, private APIs, and cart checkout payloads
 Disallow: /admin
+Disallow: /cf-admin
 Disallow: /?admin=*
 Disallow: /?portal=*
 Disallow: /?token=*

@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { generateSecret, generateURI, verifySync } = require('otplib');
 const qrcode = require('qrcode');
-const { adminAuthLimiter, getClientIp, generateAdminToken, requireAdminAuth, verifyAdminToken } = require('../middleware/security');
+const { adminAuthLimiter, getClientIp, generateAdminToken, requireAdminAuth, verifyAdminToken, safeStringEqual } = require('../middleware/security');
 const repo = require('../storage');
 
 const router = express.Router();
@@ -69,13 +69,18 @@ router.get('/status', (req, res) => {
   });
 });
 
+// 1b. Verify active admin session token
+router.get('/verify', requireAdminAuth, (req, res) => {
+  res.json({ success: true, authenticated: true });
+});
+
 // 2. Admin Passcode Verification (Step 1)
 router.post('/login', adminAuthLimiter, (req, res) => {
   const { passcode } = req.body;
   const config = getSecurityConfig();
   const validPasscode = config.passcode || process.env.ADMIN_PASSCODE || 'cellfocus2026';
 
-  if (!passcode || passcode !== validPasscode) {
+  if (!passcode || !safeStringEqual(String(passcode), String(validPasscode))) {
     return res.status(401).json({
       success: false,
       message: 'Invalid Master Admin Passcode.',
@@ -218,7 +223,7 @@ router.post('/mfa/disable', requireAdminAuth, (req, res) => {
   const config = getSecurityConfig();
   const validPasscode = config.passcode || process.env.ADMIN_PASSCODE || 'cellfocus2026';
 
-  if (passcode !== validPasscode) {
+  if (!safeStringEqual(String(passcode || ''), String(validPasscode))) {
     return res.status(401).json({
       success: false,
       message: 'Invalid Master Passcode. Authorization denied.',
@@ -242,7 +247,7 @@ router.post('/change-passcode', requireAdminAuth, (req, res) => {
   const config = getSecurityConfig();
   const validPasscode = config.passcode || process.env.ADMIN_PASSCODE || 'cellfocus2026';
 
-  if (currentPasscode !== validPasscode) {
+  if (!safeStringEqual(String(currentPasscode || ''), String(validPasscode))) {
     return res.status(401).json({
       success: false,
       message: 'Current Master Passcode is incorrect.',

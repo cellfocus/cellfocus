@@ -13,9 +13,48 @@ import OrderTrackingModal from './components/OrderTrackingModal';
 import WhatsAppButton from './components/WhatsAppButton';
 import SEOHead from './components/SEOHead';
 
+// Cryptographically secure GUID / UUID token for legacy Admin Portal Access
+const ADMIN_SECURE_TOKEN = '8f92a4e1-7c5b-4d63-91e8-2a0f6d3b4e71';
+const ADMIN_PATH_SLUGS = ['/admin', '/cf-admin'];
+const CUSTOM_ADMIN_PATH = (import.meta.env.VITE_ADMIN_PATH || '').toLowerCase().trim();
+if (CUSTOM_ADMIN_PATH) {
+  ADMIN_PATH_SLUGS.push(CUSTOM_ADMIN_PATH.startsWith('/') ? CUSTOM_ADMIN_PATH : `/${CUSTOM_ADMIN_PATH}`);
+}
+
+function isAdminEntryUrl() {
+  try {
+    const path = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+    const hash = window.location.hash.toLowerCase();
+    const searchParams = new URLSearchParams(window.location.search);
+
+    if (ADMIN_PATH_SLUGS.includes(path)) return true;
+    if (hash === '#admin' || hash === '#cf-admin') return true;
+    if (path.includes(ADMIN_SECURE_TOKEN) || path.includes(`cf-admin-${ADMIN_SECURE_TOKEN}`)) return true;
+
+    if (searchParams.has('admin')) {
+      const val = (searchParams.get('admin') || '').toLowerCase().trim();
+      if (!val || ['1', 'true', 'yes', 'portal', 'open', ADMIN_SECURE_TOKEN, `cf-admin-${ADMIN_SECURE_TOKEN}`].includes(val)) {
+        return true;
+      }
+    }
+
+    const queryToken = searchParams.get('portal') || searchParams.get('token') || searchParams.get('key');
+    if (queryToken) {
+      const normalized = queryToken.toLowerCase().trim();
+      if (normalized === 'admin' || normalized === ADMIN_SECURE_TOKEN || normalized === `cf-admin-${ADMIN_SECURE_TOKEN}`) {
+        return true;
+      }
+    }
+  } catch (e) {
+    console.warn('Admin URL check error:', e);
+  }
+  return false;
+}
+
 function App() {
-  // Staged initial load: 'loader' (3s) -> 'skeleton' (2s) -> 'ready' (full interactive website)
-  const [loadingStage, setLoadingStage] = useState('loader');
+  const initialAdminEntry = isAdminEntryUrl();
+  // Staged initial load: skip splash/skeleton when opening Admin directly for instant access
+  const [loadingStage, setLoadingStage] = useState(initialAdminEntry ? 'ready' : 'loader');
 
   useEffect(() => {
     if (loadingStage === 'skeleton') {
@@ -149,7 +188,7 @@ function App() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [cartInitialStep, setCartInitialStep] = useState('cart');
   const [detailProduct, setDetailProduct] = useState(null);
-  const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [isAdminOpen, setIsAdminOpen] = useState(initialAdminEntry);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isTrackingOpen, setIsTrackingOpen] = useState(false);
   const [trackingInitialId, setTrackingInitialId] = useState('');
@@ -160,46 +199,38 @@ function App() {
     setIsTrackingOpen(true);
   };
 
-  // Cryptographically secure GUID / UUID token for Admin Portal Access
-  const ADMIN_SECURE_TOKEN = '8f92a4e1-7c5b-4d63-91e8-2a0f6d3b4e71';
-
-  // Secret URL access handler: checks URL query params and path for the cryptographically secure token
+  // Normalize admin entry URLs and prevent search engines from indexing admin view
   useEffect(() => {
-    try {
-      const path = window.location.pathname.toLowerCase();
-      const searchParams = new URLSearchParams(window.location.search);
-      const queryToken = searchParams.get('admin') || searchParams.get('portal') || searchParams.get('token') || searchParams.get('key');
-
-      const matchesToken = (t) => {
-        if (!t) return false;
-        const normalized = t.toLowerCase().trim();
-        return normalized === ADMIN_SECURE_TOKEN || normalized === `cf-admin-${ADMIN_SECURE_TOKEN}`;
-      };
-
-      const hasPathMatch = path.includes(ADMIN_SECURE_TOKEN) || path.includes(`cf-admin-${ADMIN_SECURE_TOKEN}`);
-      const hasQueryMatch = matchesToken(queryToken);
-
-      if (hasPathMatch || hasQueryMatch) {
-        setIsAdminOpen(true);
-        // Instantly clean the browser address bar to protect the secure token from history and shoulder-surfing
-        window.history.replaceState({}, document.title, '/');
+    if (initialAdminEntry) {
+      try {
+        const currentPath = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+        const targetPath = ADMIN_PATH_SLUGS.includes(currentPath) ? currentPath : '/admin';
+        window.history.replaceState({}, document.title, targetPath);
+      } catch (e) {
+        console.warn('Admin history replace error:', e);
       }
-    } catch (e) {
-      console.warn('Admin token check error:', e);
     }
-  }, []);
+  }, [initialAdminEntry]);
+
+  useEffect(() => {
+    const robotsMeta = document.querySelector('meta[name="robots"]');
+    if (!robotsMeta) return;
+    if (isAdminOpen) {
+      robotsMeta.dataset.prevContent = robotsMeta.getAttribute('content') || '';
+      robotsMeta.setAttribute('content', 'noindex, nofollow, noarchive');
+    } else if (robotsMeta.dataset.prevContent) {
+      robotsMeta.setAttribute('content', robotsMeta.dataset.prevContent);
+      delete robotsMeta.dataset.prevContent;
+    }
+  }, [isAdminOpen]);
 
   // Emergency stealth keyboard shortcut for Admin (Ctrl + Shift + Alt + A)
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.ctrlKey && e.shiftKey && e.altKey && (e.key === 'A' || e.key === 'a')) {
         e.preventDefault();
-        const entered = window.prompt('CellFocus Security Portal — Enter Access Token:');
-        if (entered && (entered.trim() === ADMIN_SECURE_TOKEN || entered.trim() === `cf-admin-${ADMIN_SECURE_TOKEN}`)) {
-          setIsAdminOpen(true);
-        } else if (entered) {
-          alert('Access Denied: Invalid Security Token');
-        }
+        setLoadingStage('ready');
+        setIsAdminOpen(true);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -394,7 +425,15 @@ function App() {
           {/* Full-Stack Admin CRUD Side Panel */}
           <AdminPanel
             isOpen={isAdminOpen}
-            onClose={() => setIsAdminOpen(false)}
+            onClose={() => {
+              setIsAdminOpen(false);
+              try {
+                const path = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+                if (ADMIN_PATH_SLUGS.includes(path)) {
+                  window.history.replaceState({}, document.title, '/');
+                }
+              } catch (e) {}
+            }}
             onProductsChanged={() => setRefreshTrigger((prev) => prev + 1)}
           />
 

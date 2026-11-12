@@ -10,7 +10,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const seoRoutes = require('./routes/seoRoutes');
-const { helmetMiddleware, generalApiLimiter, corsOptionsDelegate } = require('./middleware/security');
+const { helmetMiddleware, generalApiLimiter, corsOptionsDelegate, ipAllowlistMiddleware, adminSecurityHeaders } = require('./middleware/security');
 const repo = require('./storage');
 const baileysManager = require('./services/baileysService');
 
@@ -46,7 +46,7 @@ app.use((err, req, res, next) => {
 // Primary API Routes
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
-app.use('/api/admin', adminRoutes);
+app.use('/api/admin', ipAllowlistMiddleware, adminSecurityHeaders, adminRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/', seoRoutes);

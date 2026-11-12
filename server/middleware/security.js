@@ -55,6 +55,14 @@ const verifyAdminToken = (token) => {
   }
 };
 
+// Constant-time string comparison via SHA-256 digests to prevent timing attacks
+const safeStringEqual = (a, b) => {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const hashA = crypto.createHash('sha256').update(a).digest();
+  const hashB = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+};
+
 // Middleware: Enforce admin session token or verified passcode
 const requireAdminAuth = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -69,7 +77,7 @@ const requireAdminAuth = (req, res, next) => {
   // Check valid admin passcode header
   const passcode = req.headers['x-admin-passcode'] || req.headers['x-passcode'];
   const activePasscode = getActivePasscode();
-  if (passcode && passcode === activePasscode) {
+  if (passcode && safeStringEqual(passcode, activePasscode)) {
     return next();
   }
 
@@ -77,6 +85,13 @@ const requireAdminAuth = (req, res, next) => {
     success: false,
     message: 'Administrative authorization required. Token missing, expired, or invalid.',
   });
+};
+
+// Security headers for Admin API endpoints (prevent indexing & caching)
+const adminSecurityHeaders = (req, res, next) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  next();
 };
 
 // 1. Production Helmet Security Headers
@@ -194,7 +209,15 @@ const ipAllowlistMiddleware = (req, res, next) => {
 const corsOptionsDelegate = (req, callback) => {
   const allowedOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
-    : ['https://cellfocus.pk', 'https://www.cellfocus.pk', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5000'];
+    : [
+        'https://cellfocusaccessories.com',
+        'https://www.cellfocusaccessories.com',
+        'https://cellfocus.pk',
+        'https://www.cellfocus.pk',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+        'http://localhost:5000',
+      ];
 
   const origin = req.header('Origin');
   // Allow requests with no origin (like mobile apps, curl, or same-origin requests)
@@ -213,6 +236,8 @@ module.exports = {
   uploadLimiter,
   generalApiLimiter,
   ipAllowlistMiddleware,
+  adminSecurityHeaders,
+  safeStringEqual,
   requireAdminAuth,
   generateAdminToken,
   verifyAdminToken,

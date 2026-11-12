@@ -5,7 +5,7 @@
   "description": "CellFocus Full-Stack eCommerce Storefront & Admin API",
   "main": "server/server.js",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.19.0"
   },
   "scripts": {
     "install:all": "npm install --prefix server && npm install --prefix client",
@@ -13,3 +13,4 @@
     "start": "node server/server.js"
   }
 }
+

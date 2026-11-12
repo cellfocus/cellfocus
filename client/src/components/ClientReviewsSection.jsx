@@ -9,6 +9,7 @@ export default function ClientReviewsSection() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [submitError, setSubmitError] = useState('');
   const [isPaused, setIsPaused] = useState(false);
 
   // New Review Form State
@@ -115,6 +116,7 @@ export default function ClientReviewsSection() {
   const handleSubmitReview = async (e) => {
     e.preventDefault();
     if (!formData.comment.trim()) return;
+    setSubmitError('');
 
     try {
       setSubmitting(true);
@@ -123,19 +125,27 @@ export default function ClientReviewsSection() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Reviews API unreachable (HTTP ${res.status}). Ensure backend server is running.`);
+      }
       const json = await res.json();
 
-      if (json.success && json.data) {
+      if (res.ok && json.success && json.data) {
         setReviews((prev) => [json.data, ...prev]);
         setSubmitSuccess(true);
         setTimeout(() => {
           setIsModalOpen(false);
           setSubmitSuccess(false);
+          setSubmitError('');
           setFormData({ name: '', city: '', rating: 5, comment: '', productName: '' });
         }, 1600);
+      } else {
+        setSubmitError(json.message || 'Could not submit review. Please try again.');
       }
     } catch (err) {
       console.error('Error submitting review:', err);
+      setSubmitError(err?.message || 'Unable to connect to reviews service.');
     } finally {
       setSubmitting(false);
     }
@@ -419,6 +429,12 @@ export default function ClientReviewsSection() {
                     className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-[#faf8f4] focus:bg-white focus:outline-none focus:border-[#1c1b18] transition-all resize-none"
                   />
                 </div>
+
+                {submitError && (
+                  <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+                    {submitError}
+                  </p>
+                )}
 
                 <div className="flex gap-2 pt-2">
                   <button

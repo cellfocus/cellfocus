@@ -14,7 +14,7 @@ const { helmetMiddleware, generalApiLimiter, corsOptionsDelegate, ipAllowlistMid
 const repo = require('./storage');
 const baileysManager = require('./services/baileysService');
 
-dotenv.config();
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -80,21 +80,27 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Root info
-app.get('/', (req, res) => {
-  res.json({
-    app: 'CellFocus eCommerce API',
-    status: 'healthy',
-    version: '1.0.0',
-    endpoints: {
-      products: '/api/products',
-      orders: '/api/orders',
-      health: '/api/health',
-      sitemap: '/sitemap.xml',
-      robots: '/robots.txt',
-    },
+// Root API info (only when frontend bundle is not co-located)
+const CLIENT_DIST_DIR = path.join(__dirname, '..', 'client', 'dist');
+const CLIENT_INDEX_HTML = path.join(CLIENT_DIST_DIR, 'index.html');
+
+if (!fs.existsSync(CLIENT_INDEX_HTML)) {
+  app.get('/', (req, res) => {
+    res.json({
+      app: 'CellFocus eCommerce API',
+      status: 'healthy',
+      version: '1.0.0',
+      endpoints: {
+        products: '/api/products',
+        orders: '/api/orders',
+        reviews: '/api/reviews',
+        health: '/api/health',
+        sitemap: '/sitemap.xml',
+        robots: '/robots.txt',
+      },
+    });
   });
-});
+}
 
 // 404 Handler for undefined API routes
 app.use('/api', (req, res) => {
@@ -103,6 +109,22 @@ app.use('/api', (req, res) => {
     message: `API endpoint '${req.originalUrl}' does not exist.`,
   });
 });
+
+// Serve built Vite SPA frontend when co-deployed with backend (Hostinger Node.js Web App / VPS)
+if (fs.existsSync(CLIENT_INDEX_HTML)) {
+  app.use(express.static(CLIENT_DIST_DIR, { maxAge: '7d', index: false }));
+
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      return next();
+    }
+    if (/^\/(cf-)?admin(\/|$)/i.test(req.path) || req.query.admin !== undefined) {
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    }
+    return res.sendFile(CLIENT_INDEX_HTML);
+  });
+}
 
 // Centralized Production Error Handler (Prevent stack trace leakage)
 app.use((err, req, res, next) => {
@@ -123,7 +145,8 @@ async function startServer() {
     await mongoose.connect(MONGODB_URI, {
       maxPoolSize: 10,
       minPoolSize: 2,
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 2500,
+      connectTimeoutMS: 2500,
       socketTimeoutMS: 45000,
     });
     console.log('✓ [Database] Connected to MongoDB successfully.');

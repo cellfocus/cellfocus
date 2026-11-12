@@ -39,13 +39,9 @@ Options -Indexes
   </IfModule>
 </FilesMatch>
 
-# Security headers & prevent search engine indexing of Admin routes
+# Security headers
 <IfModule mod_headers.c>
   Header always set X-Content-Type-Options "nosniff"
   Header always set X-Frame-Options "SAMEORIGIN"
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
-  <If "%{REQUEST_URI} =~ m#^/(cf-)?admin#i || %{QUERY_STRING} =~ m#(^|&)admin(=|&|$)#i">
-    Header always set X-Robots-Tag "noindex, nofollow, noarchive"
-    Header always set Cache-Control "no-store, no-cache, must-revalidate, private"
-  </If>
 </IfModule>

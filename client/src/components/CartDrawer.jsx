@@ -78,16 +78,20 @@ export default function CartDrawer({
           total,
         }),
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Order API unreachable (HTTP ${res.status})`);
+      }
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         setPlacedOrder(data.data);
         setStep('success');
         onClearCart();
       } else {
-        alert('Order failed: ' + data.message);
+        alert('Order failed: ' + (data.message || `HTTP ${res.status}`));
       }
     } catch (err) {
-      alert('Could not submit order. Please check backend connection.');
+      alert(err?.message || 'Could not submit order. Please check backend connection.');
     } finally {
       setIsSubmitting(false);
     }

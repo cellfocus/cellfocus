@@ -185,6 +185,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
   const [waStatus, setWaStatus] = useState({ status: 'disconnected', qrDataUrl: null, connectedUser: null });
   const [waTestPhone, setWaTestPhone] = useState('');
   const [waBusy, setWaBusy] = useState(false);
+  const [waPairPhone, setWaPairPhone] = useState('03269589597');
   const [emailConfig, setEmailConfig] = useState({
     apiKey: '',
     maskedApiKey: '',
@@ -491,6 +492,31 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
       showToast('Copied WHATSAPP_AUTH_GZ_B64 value! Add it in Hostinger hPanel Env Vars so future deploys stay connected.');
     } catch (err) {
       showToast('Failed to copy WHATSAPP_AUTH_GZ_B64: ' + err.message, 'error');
+    } finally {
+      setWaBusy(false);
+    }
+  };
+
+  const handleWaPairByPhone = async (e) => {
+    e.preventDefault();
+    if (!waPairPhone.trim()) return;
+    setWaBusy(true);
+    try {
+      const res = await fetch(ENDPOINTS.ADMIN.WHATSAPP.PAIR_CODE, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ phone: waPairPhone.trim() }),
+      });
+      const data = await res.json();
+      if (data.success && data.code) {
+        setWaStatus((prev) => ({ ...prev, pairingCode: data.code, conflictDetected: false, status: 'qr_ready' }));
+        showToast(`Pairing code ${data.code} ready! Enter it on your phone under Linked Devices.`);
+        fetchWaStatus();
+      } else {
+        showToast(data.message || 'Failed to generate pairing code', 'error');
+      }
+    } catch (err) {
+      showToast('Error requesting pairing code: ' + err.message, 'error');
     } finally {
       setWaBusy(false);
     }
@@ -2272,9 +2298,23 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                     {waStatus.lastError && (
                       <p className="text-[11px] font-mono text-rose-700">Last error: {waStatus.lastError}</p>
                     )}
-                    <p className="text-[11px] text-amber-800">
-                      Click <strong>Import Existing Session (.json)</strong> below and choose <code>server/data/baileys_auth_backup.json</code> (no QR rescan needed).
-                    </p>
+                    {waStatus.conflictDetected && (
+                      <p className="text-[11px] font-semibold text-rose-800">
+                        440 Conflict means another active process or server is still using your old Nov-11 session file. Use <strong>Link by 8-Digit Code</strong> below once to give this live server its own dedicated WhatsApp device slot so it stops disconnecting.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {waStatus.pairingCode && waStatus.status !== 'connected' && (
+                  <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-300 flex flex-col sm:flex-row items-center justify-between gap-3">
+                    <div className="text-xs text-emerald-950 space-y-1">
+                      <p className="font-bold">8-Digit WhatsApp Pairing Code</p>
+                      <p>Open WhatsApp on mobile &rarr; <strong>Linked Devices</strong> &rarr; <strong>Link a Device</strong> &rarr; <strong>Link with phone number instead</strong> &rarr; enter this code:</p>
+                    </div>
+                    <span className="font-mono text-xl font-black tracking-[0.2em] bg-white px-4 py-2 rounded-xl border border-emerald-400 text-emerald-900 select-all">
+                      {waStatus.pairingCode}
+                    </span>
                   </div>
                 )}
 
@@ -2350,6 +2390,24 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                     </button>
                   )}
                 </div>
+
+                <form onSubmit={handleWaPairByPhone} className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-[#f0eee6]">
+                  <input
+                    type="text"
+                    value={waPairPhone}
+                    onChange={(e) => setWaPairPhone(e.target.value)}
+                    placeholder="Store WhatsApp phone for 8-digit code (e.g. 03269589597)"
+                    className="flex-1 text-xs p-2.5 rounded-xl border border-[#dedad0] bg-[#faf8f4] text-[#1c1b18] font-mono"
+                  />
+                  <button
+                    type="submit"
+                    disabled={waBusy}
+                    className="px-4 py-2.5 rounded-xl bg-[#1c1b18] hover:bg-[#33312b] text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Phone className="w-3.5 h-3.5" />
+                    <span>Link by 8-Digit Code (No QR)</span>
+                  </button>
+                </form>
 
                 <form onSubmit={handleWaTest} className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-[#f0eee6]">
                   <input

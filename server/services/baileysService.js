@@ -61,6 +61,10 @@ if (
   }
 }
 
+const LOCK_FILE = path.join(AUTH_DIR, 'bot.lock');
+const STATUS_FILE = path.join(AUTH_DIR, 'bot_status.json');
+const INTERNAL_META_FILES = new Set(['bot.lock', 'bot_status.json']);
+
 const SAFE_AUTH_FILENAME_RE = /^[a-zA-Z0-9._@-]+$/;
 
 function sanitizeSessionFileMap(filesObj) {
@@ -71,6 +75,7 @@ function sanitizeSessionFileMap(filesObj) {
   for (const [name, content] of Object.entries(filesObj)) {
     if (
       typeof name !== 'string' ||
+      INTERNAL_META_FILES.has(name) ||
       !SAFE_AUTH_FILENAME_RE.test(name) ||
       name.includes('..') ||
       typeof content !== 'string'
@@ -85,20 +90,80 @@ function sanitizeSessionFileMap(filesObj) {
   return clean;
 }
 
+function isPidAlive(pid) {
+  if (!pid || typeof pid !== 'number') return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e && e.code === 'EPERM';
+  }
+}
+
 class BaileysManager {
   constructor() {
     this.sock = null;
     this.status = 'disconnected'; // 'disconnected' | 'connecting' | 'qr_ready' | 'connected'
     this.qrDataUrl = null;
     this.rawQR = null;
+    this.pairingCode = null;
     this.connectedUser = null;
     this.reconnectAttempts = 0;
     this.replacedRetries = 0;
+    this.conflictDetected = false;
     this.reconnectTimer = null;
     this.watchdogTimer = null;
     this.isConnecting = false;
+    this.initPromise = null;
     this.lastError = null;
     this.logger = pino({ level: 'silent' });
+  }
+
+  _hasActiveSiblingWorker() {
+    try {
+      if (!fs.existsSync(LOCK_FILE)) return false;
+      const lock = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8'));
+      if (!lock || lock.pid === process.pid) return false;
+      const fresh = Date.now() - Number(lock.updatedAt || 0) < 25000;
+      return fresh && isPidAlive(lock.pid);
+    } catch {
+      return false;
+    }
+  }
+
+  _refreshWorkerLockAndStatus() {
+    try {
+      if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
+      fs.writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, updatedAt: Date.now() }), 'utf8');
+      fs.writeFileSync(
+        STATUS_FILE,
+        JSON.stringify({
+          pid: process.pid,
+          status: this.status,
+          connectedUser: this.connectedUser,
+          lastError: this.lastError,
+          conflictDetected: this.conflictDetected,
+          pairingCode: this.pairingCode,
+          hasQR: !!this.qrDataUrl,
+          qr: this.qrDataUrl,
+          updatedAt: Date.now(),
+        }),
+        'utf8'
+      );
+    } catch {
+      // ignore lock file write errors
+    }
+  }
+
+  _clearWorkerLock() {
+    try {
+      if (fs.existsSync(LOCK_FILE)) {
+        const lock = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8'));
+        if (lock?.pid === process.pid) fs.unlinkSync(LOCK_FILE);
+      }
+    } catch {
+      // ignore
+    }
   }
 
   _writeAuthFiles(fileMap) {
@@ -144,7 +209,7 @@ class BaileysManager {
 
     for (const name of entries) {
       const fp = path.join(AUTH_DIR, name);
-      if (!fs.statSync(fp).isFile() || !SAFE_AUTH_FILENAME_RE.test(name)) continue;
+      if (INTERNAL_META_FILES.has(name) || !fs.statSync(fp).isFile() || !SAFE_AUTH_FILENAME_RE.test(name)) continue;
       if (compact) {
         const isEssential =
           name === 'creds.json' ||
@@ -181,14 +246,17 @@ class BaileysManager {
       throw new Error('Provide a valid baileys_auth_backup.json payload.');
     }
 
-    this.cleanupSocket();
+    await this.cleanupSocket();
     this.isConnecting = false;
     this.status = 'disconnected';
     this.qrDataUrl = null;
     this.rawQR = null;
+    this.pairingCode = null;
     this.connectedUser = null;
     this.reconnectAttempts = 0;
     this.replacedRetries = 0;
+    this.conflictDetected = false;
+    this.lastError = null;
 
     const importedFiles = this._writeAuthFiles(fileMap);
     console.log(`[Baileys] Imported ${importedFiles} existing WhatsApp session files. Connecting...`);
@@ -202,25 +270,30 @@ class BaileysManager {
       message:
         this.status === 'connected'
           ? `WhatsApp session restored & connected (+${this.connectedUser}) without QR scan!`
-          : `Imported ${importedFiles} session files. Bot is connecting (${this.status})...`,
+          : `Imported ${importedFiles} session files. Bot status: ${this.status}`,
     };
   }
 
-  cleanupSocket() {
+  async cleanupSocket() {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
     if (this.sock) {
+      const prevSock = this.sock;
+      this.sock = null;
       try {
-        this.sock.ev.removeAllListeners('connection.update');
-        this.sock.ev.removeAllListeners('creds.update');
-        this.sock.ev.removeAllListeners('messages.upsert');
-        this.sock.end(undefined);
-      } catch (e) {
+        prevSock.ev.removeAllListeners('connection.update');
+        prevSock.ev.removeAllListeners('creds.update');
+        prevSock.ev.removeAllListeners('messages.upsert');
+        await Promise.race([
+          Promise.resolve(prevSock.end(undefined)),
+          new Promise((r) => setTimeout(r, 1500)),
+        ]);
+        await new Promise((r) => setTimeout(r, 300));
+      } catch {
         // ignore errors during cleanup
       }
-      this.sock = null;
     }
   }
 
@@ -228,25 +301,46 @@ class BaileysManager {
     if (this.watchdogTimer) return;
     this.watchdogTimer = setInterval(() => {
       try {
+        if (this._hasActiveSiblingWorker()) return;
+        this._refreshWorkerLockAndStatus();
         const hasCreds = fs.existsSync(path.join(AUTH_DIR, 'creds.json'));
         if (!hasCreds) return;
         const wsClosed = this.sock?.ws && this.sock.ws.isOpen === false;
-        if ((this.status === 'connected' && wsClosed) || (this.status === 'disconnected' && !this.isConnecting && !this.reconnectTimer && this.replacedRetries < 3)) {
+        if (
+          (this.status === 'connected' && wsClosed) ||
+          (this.status === 'disconnected' && !this.isConnecting && !this.reconnectTimer && !this.conflictDetected && this.replacedRetries < 1)
+        ) {
           console.log('[Baileys Watchdog] Detected dropped socket while session exists — triggering clean auto-reconnect...');
           this.init(true);
         }
       } catch {
         // ignore watchdog errors
       }
-    }, 45000);
+    }, 15000);
     if (typeof this.watchdogTimer.unref === 'function') {
       this.watchdogTimer.unref();
     }
   }
 
   async init(force = false) {
+    if (this.initPromise) {
+      if (!force) return this.initPromise;
+      await this.initPromise.catch(() => {});
+    }
+    this.initPromise = this._doInit(force).finally(() => {
+      this.initPromise = null;
+    });
+    return this.initPromise;
+  }
+
+  async _doInit(force = false) {
     if (!makeWASocket || !useMultiFileAuthState) {
       console.error('[Baileys] Module not properly loaded.');
+      return;
+    }
+
+    if (this._hasActiveSiblingWorker()) {
+      console.log('[Baileys] Another active worker already holds the WhatsApp lock — standing by to avoid 440 conflict.');
       return;
     }
 
@@ -256,11 +350,12 @@ class BaileysManager {
     }
 
     this.isConnecting = true;
-    this.cleanupSocket();
+    await this.cleanupSocket();
 
     try {
       this.restoreFromEnvIfNeeded();
       this.status = 'connecting';
+      this._refreshWorkerLockAndStatus();
       const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
       let waVersion;
@@ -305,6 +400,7 @@ class BaileysManager {
             this.qrDataUrl = await QRCode.toDataURL(qr, { margin: 2, scale: 6 });
             this.status = 'qr_ready';
             this.isConnecting = false;
+            this._refreshWorkerLockAndStatus();
             console.log('\n======================================================');
             console.log('⚡ [CellFocus WhatsApp Bot] SCAN QR CODE TO CONNECT:');
             console.log('Open WhatsApp on your phone -> Linked Devices -> Link a Device');
@@ -338,15 +434,18 @@ class BaileysManager {
             } catch (rmErr) {
               console.error('[Baileys] Error clearing auth dir:', rmErr.message);
             }
+            this.conflictDetected = false;
+            this.pairingCode = null;
             this.reconnectTimer = setTimeout(() => this.init(true), 2000);
           } else if (isReplaced) {
-            if (this.replacedRetries < 3) {
-              const waitMs = 12000 * (this.replacedRetries + 1);
+            if (this.replacedRetries < 1) {
               this.replacedRetries++;
-              console.warn(`[Baileys] Connection replaced (440) — waiting ${waitMs / 1000}s before recovery retry ${this.replacedRetries}/3 (handles server restarts cleanly)...`);
-              this.reconnectTimer = setTimeout(() => this.init(true), waitMs);
+              console.warn('[Baileys] Connection replaced (440) — waiting 15s once in case an old deployment worker is shutting down...');
+              this.reconnectTimer = setTimeout(() => this.init(true), 15000);
             } else {
-              console.warn('[Baileys] Repeated 440 collision detected. Halting auto-reconnect until manual Restart in Admin Panel.');
+              this.conflictDetected = true;
+              this.lastError = 'Another active server or session is using this same WhatsApp device ID (440 Conflict). Generate a fresh QR or 8-digit Pairing Code below to dedicate a new device slot to this server.';
+              console.warn('[Baileys] Persistent 440 conflict detected — stopping auto-reconnect loop to prevent ping-pong kicks.');
             }
           } else {
             // Transient network disconnect or code 515 restartRequired
@@ -355,18 +454,22 @@ class BaileysManager {
             console.log(`[Baileys] Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts})...`);
             this.reconnectTimer = setTimeout(() => this.init(true), delay);
           }
+          this._refreshWorkerLockAndStatus();
         } else if (connection === 'open') {
           this.isConnecting = false;
           this.status = 'connected';
           this.qrDataUrl = null;
           this.rawQR = null;
+          this.pairingCode = null;
           this.lastError = null;
+          this.conflictDetected = false;
           this.reconnectAttempts = 0;
           this.replacedRetries = 0;
 
           const userJid = this.sock.user?.id || '';
           const phone = userJid.split(':')[0] || userJid.split('@')[0];
           this.connectedUser = phone;
+          this._refreshWorkerLockAndStatus();
 
           console.log('\n======================================================');
           console.log(`🎉 [CellFocus WhatsApp Bot] CONNECTED SUCCESSFULLY!`);
@@ -380,6 +483,7 @@ class BaileysManager {
       this.isConnecting = false;
       this.status = 'disconnected';
       this.lastError = err.message;
+      this._refreshWorkerLockAndStatus();
     }
   }
 
@@ -392,18 +496,82 @@ class BaileysManager {
   }
 
   getStatus() {
+    if (this._hasActiveSiblingWorker()) {
+      try {
+        if (fs.existsSync(STATUS_FILE)) {
+          const shared = JSON.parse(fs.readFileSync(STATUS_FILE, 'utf8'));
+          return {
+            ...shared,
+            hasSession: fs.existsSync(path.join(AUTH_DIR, 'creds.json')),
+          };
+        }
+      } catch {
+        // fallback to local memory state
+      }
+    }
     return {
       status: this.status,
       connectedUser: this.connectedUser,
       hasSession: fs.existsSync(path.join(AUTH_DIR, 'creds.json')),
       lastError: this.lastError,
+      conflictDetected: this.conflictDetected,
+      pairingCode: this.pairingCode,
       hasQR: !!this.qrDataUrl,
       qr: this.qrDataUrl,
     };
   }
 
+  async requestPairingCode(rawPhone) {
+    let digits = String(rawPhone || '').replace(/\D/g, '');
+    if (digits.startsWith('0092')) digits = digits.slice(2);
+    if (digits.startsWith('920') && digits.length >= 13) digits = '92' + digits.slice(3);
+    if (digits.startsWith('0')) digits = '92' + digits.slice(1);
+    if (digits.length === 10 && digits.startsWith('3')) digits = '92' + digits;
+    if (digits.length < 10) {
+      throw new Error('Enter a valid WhatsApp phone number with country code (e.g. 03269589597 or 923269589597).');
+    }
+
+    await this.cleanupSocket();
+    try {
+      fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+      fs.mkdirSync(AUTH_DIR, { recursive: true });
+    } catch {
+      // ignore
+    }
+    this.status = 'disconnected';
+    this.connectedUser = null;
+    this.qrDataUrl = null;
+    this.pairingCode = null;
+    this.conflictDetected = false;
+    this.lastError = null;
+    this.replacedRetries = 0;
+    this.reconnectAttempts = 0;
+
+    // Start fresh socket without awaiting indefinitely
+    this.init(true);
+    const start = Date.now();
+    while (!this.sock && Date.now() - start < 5000) {
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    if (!this.sock || typeof this.sock.requestPairingCode !== 'function') {
+      throw new Error('WhatsApp socket not ready for pairing code. Please try again.');
+    }
+    // Small wait so Noise handshake / WA WS is open before pairing request
+    await new Promise((r) => setTimeout(r, 1800));
+    const code = await this.sock.requestPairingCode(digits);
+    this.pairingCode = code;
+    this._refreshWorkerLockAndStatus();
+    return {
+      success: true,
+      code,
+      phone: digits,
+      message: `Enter code ${code} in WhatsApp -> Linked Devices -> Link with phone number instead.`,
+    };
+  }
+
   async logout() {
-    this.cleanupSocket();
+    await this.cleanupSocket();
+    this._clearWorkerLock();
     try {
       fs.rmSync(AUTH_DIR, { recursive: true, force: true });
       fs.mkdirSync(AUTH_DIR, { recursive: true });
@@ -413,7 +581,11 @@ class BaileysManager {
     this.status = 'disconnected';
     this.connectedUser = null;
     this.qrDataUrl = null;
+    this.pairingCode = null;
+    this.conflictDetected = false;
+    this.lastError = null;
     this.reconnectAttempts = 0;
+    this.replacedRetries = 0;
     setTimeout(() => this.init(true), 1500);
     return { success: true, message: 'Logged out successfully' };
   }

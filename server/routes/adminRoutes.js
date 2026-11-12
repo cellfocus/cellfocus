@@ -510,6 +510,16 @@ router.post('/whatsapp/import-auth', requireAdminAuth, async (req, res) => {
   }
 });
 
+// POST Generate 8-Digit Pairing Code for a Phone Number (Dedicated New Device Slot)
+router.post('/whatsapp/pair-code', requireAdminAuth, async (req, res) => {
+  try {
+    const result = await baileysManager.requestPairingCode(req.body?.phone);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
 // ==========================================
 // Brevo Email Alert Endpoints
 // ==========================================

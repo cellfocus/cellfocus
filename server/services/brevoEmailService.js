@@ -251,6 +251,113 @@ class BrevoEmailService {
   }
 
   /**
+   * Internal shared Brevo transactional email sender
+   */
+  async _postBrevoEmail({ apiKey, senderEmail, senderName, to, subject, htmlContent }) {
+    try {
+      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'api-key': apiKey,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          sender: { name: senderName, email: senderEmail },
+          to,
+          subject,
+          htmlContent,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return { success: false, error: data.message || `Brevo API returned status ${response.status}`, data };
+      }
+      return { success: true, messageId: data.messageId };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Send order confirmation email to the customer when an order is placed
+   */
+  async sendOrderConfirmationToCustomer(order) {
+    this.config = this.loadConfig();
+    if (!this.config.enabled || !this.config.apiKey) return { success: false, reason: 'Email disabled or missing API key' };
+    const customerEmail = (order.customer?.email || '').trim();
+    if (!customerEmail || !customerEmail.includes('@')) return { success: false, reason: 'Customer email missing' };
+
+    const senderEmail = this.config.senderEmail || this.config.adminEmail;
+    if (!senderEmail) return { success: false, reason: 'Sender email missing' };
+
+    const orderId = order.orderId || 'Order';
+    const customerName = order.customer?.name || 'Valued Customer';
+    const totalAmount = Math.round(Number(order.total || 0)).toLocaleString();
+    const itemsHtml = (order.items || [])
+      .map((it) => `<li>${it.name} × ${it.qty} — <strong>Rs. ${Math.round(Number(it.price || 0) * Number(it.qty || 1)).toLocaleString()} PKR</strong></li>`)
+      .join('');
+
+    return this._postBrevoEmail({
+      apiKey: this.config.apiKey,
+      senderEmail,
+      senderName: this.config.senderName || 'CellFocus Store',
+      to: [{ email: customerEmail, name: customerName }],
+      subject: `✅ Order Confirmed #${orderId} — CellFocus Pakistan`,
+      htmlContent: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #e5e2d6; border-radius: 14px; background: #ffffff; color: #1c1b18;">
+          <h2 style="margin-top: 0;">Assalam-o-Alaikum ${customerName}!</h2>
+          <p>Thank you for ordering from <strong>CellFocus</strong>. Your order <strong>#${orderId}</strong> has been received and is currently <strong>Pending</strong> confirmation.</p>
+          <ul>${itemsHtml}</ul>
+          <p><strong>Total (PKR):</strong> Rs. ${totalAmount} PKR</p>
+          <p><strong>Delivery Address:</strong> ${order.customer?.address || ''}${order.customer?.city ? ', ' + order.customer.city : ''}</p>
+          <p style="font-size: 12px; color: #78746a;">Need help? WhatsApp or call 0326 9589597.</p>
+        </div>
+      `,
+    });
+  }
+
+  /**
+   * Send order status update email to customer (e.g., Dispatched or Return)
+   */
+  async sendOrderStatusEmail(order, status) {
+    this.config = this.loadConfig();
+    if (!this.config.enabled || !this.config.apiKey) return { success: false, reason: 'Email disabled or missing API key' };
+    const customerEmail = (order.customer?.email || '').trim();
+    if (!customerEmail || !customerEmail.includes('@')) return { success: false, reason: 'Customer email missing' };
+
+    const senderEmail = this.config.senderEmail || this.config.adminEmail;
+    if (!senderEmail) return { success: false, reason: 'Sender email missing' };
+
+    const orderId = order.orderId || 'Order';
+    const customerName = order.customer?.name || 'Valued Customer';
+    const totalAmount = Math.round(Number(order.total || 0)).toLocaleString();
+    const isDispatched = status === 'Dispatched';
+
+    return this._postBrevoEmail({
+      apiKey: this.config.apiKey,
+      senderEmail,
+      senderName: this.config.senderName || 'CellFocus Store',
+      to: [{ email: customerEmail, name: customerName }],
+      subject: isDispatched
+        ? `🚚 Your CellFocus Order #${orderId} Has Been Dispatched!`
+        : `📦 Update on Your CellFocus Order #${orderId}: ${status}`,
+      htmlContent: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #e5e2d6; border-radius: 14px; background: #ffffff; color: #1c1b18;">
+          <h2 style="margin-top: 0; color: ${isDispatched ? '#059669' : '#be123c'};">${isDispatched ? 'Your Order is Dispatched!' : `Order Status: ${status}`}</h2>
+          <p>Assalam-o-Alaikum <strong>${customerName}</strong>,</p>
+          <p>${isDispatched
+            ? `Great news! Your order <strong>#${orderId}</strong> has been handed over to our courier rider and is on the way to your address.`
+            : `Your order <strong>#${orderId}</strong> status has been updated to <strong>${status}</strong>.`}</p>
+          <p><strong>Total (PKR):</strong> Rs. ${totalAmount} PKR</p>
+          <p><strong>Delivery Address:</strong> ${order.customer?.address || ''}${order.customer?.city ? ', ' + order.customer.city : ''}</p>
+          <p style="font-size: 12px; color: #78746a;">Questions? Reply via WhatsApp or call 0326 9589597.</p>
+        </div>
+      `,
+    });
+  }
+
+  /**
    * Send order notification email via Brevo REST API v3
    */
   async sendNewOrderAlert(order) {

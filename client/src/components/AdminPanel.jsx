@@ -3,7 +3,8 @@ import {
   MessageSquare, Star,
   X, Plus, Edit2, Trash2, Save, RefreshCw, Check, AlertCircle, 
   Package, ShoppingCart, Truck, Clock, CheckCircle, XCircle, Search, ChevronDown, User, Phone, MapPin, ArrowLeft,
-  UploadCloud, Image as ImageIcon, Flame, Sparkles, Zap, ShieldCheck, Lock, Unlock, Key, Shield
+  UploadCloud, Image as ImageIcon, Flame, Sparkles, Zap, ShieldCheck, Lock, Unlock, Key, Shield,
+  MessageCircle, Mail, Send, QrCode
 } from 'lucide-react';
 import defaultProducts from '../data/defaultProducts.json';
 import { API_BASE_URL, ENDPOINTS } from '../config/api';
@@ -11,12 +12,34 @@ import { API_BASE_URL, ENDPOINTS } from '../config/api';
 const API_PRODUCTS = ENDPOINTS.PRODUCTS;
 const API_ORDERS = ENDPOINTS.ORDERS;
 
+const ORDER_STATUSES = ['Pending', 'Dispatched', 'Return'];
+
 const STATUS_CONFIG = {
   Pending: { bg: 'bg-amber-50 text-amber-800 border-amber-300', icon: Clock },
-  Processing: { bg: 'bg-blue-50 text-blue-800 border-blue-300', icon: RefreshCw },
-  Shipped: { bg: 'bg-indigo-50 text-indigo-800 border-indigo-300', icon: Truck },
-  Delivered: { bg: 'bg-emerald-50 text-emerald-800 border-emerald-300', icon: CheckCircle },
-  Cancelled: { bg: 'bg-rose-50 text-rose-800 border-rose-300', icon: XCircle },
+  Dispatched: { bg: 'bg-emerald-50 text-emerald-800 border-emerald-300', icon: Truck },
+  Return: { bg: 'bg-rose-50 text-rose-800 border-rose-300', icon: XCircle },
+};
+
+const normalizeOrderStatus = (raw) => {
+  if (raw === 'Dispatched' || raw === 'Dispached' || raw === 'Shipped' || raw === 'Delivered') return 'Dispatched';
+  if (raw === 'Return' || raw === 'Cancelled') return 'Return';
+  return 'Pending';
+};
+
+const formatPkr = (amount) => `Rs. ${Math.round(Number(amount) || 0).toLocaleString()}`;
+
+const buildOrderWaUrl = (ord) => {
+  const raw = String(ord?.customer?.phone || '').replace(/\D/g, '');
+  if (!raw) return null;
+  let digits = raw;
+  if (digits.startsWith('0092')) digits = digits.slice(2);
+  if (digits.startsWith('0')) digits = '92' + digits.slice(1);
+  if (digits.length === 10 && digits.startsWith('3')) digits = '92' + digits;
+  const st = normalizeOrderStatus(ord?.status);
+  const msg = st === 'Dispatched'
+    ? `Assalam-o-Alaikum ${ord?.customer?.name || 'Customer'}! Your CellFocus order #${ord?.orderId} has been DISPATCHED. Total COD: ${formatPkr(ord?.total)} PKR.`
+    : `Assalam-o-Alaikum ${ord?.customer?.name || 'Customer'}! Update on your CellFocus order #${ord?.orderId}: Status is ${st}. Total: ${formatPkr(ord?.total)} PKR.`;
+  return `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
 };
 
 export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
@@ -152,6 +175,20 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
   const [mfaSetupCode, setMfaSetupCode] = useState('');
   const [showMfaModal, setShowMfaModal] = useState(false);
   const [securityStatus, setSecurityStatus] = useState(null);
+  const [waStatus, setWaStatus] = useState({ status: 'disconnected', qrDataUrl: null, connectedUser: null });
+  const [waTestPhone, setWaTestPhone] = useState('');
+  const [waBusy, setWaBusy] = useState(false);
+  const [emailConfig, setEmailConfig] = useState({
+    apiKey: '',
+    maskedApiKey: '',
+    apiKeyConfigured: false,
+    senderEmail: '',
+    senderName: 'CellFocus Store Alerts',
+    adminEmail: 'cellfocusc21@gmail.com',
+    enabled: true,
+  });
+  const [emailTestAddr, setEmailTestAddr] = useState('');
+  const [emailBusy, setEmailBusy] = useState(false);
 
   const getAuthHeaders = () => {
     const token = adminToken || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('cf_admin_token') : '') || '';
@@ -292,6 +329,163 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     }
   };
 
+  const fetchWaStatus = async (tokenOverride) => {
+    const activeToken = tokenOverride || adminToken || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('cf_admin_token') : '');
+    if (!activeToken) return;
+    try {
+      const res = await fetch(ENDPOINTS.ADMIN.WHATSAPP.STATUS, {
+        headers: { Authorization: `Bearer ${activeToken}` },
+      });
+      const json = await res.json();
+      if (json.success && json.data) setWaStatus(json.data);
+    } catch (err) {
+      console.warn('Failed to fetch WhatsApp status:', err);
+    }
+  };
+
+  const fetchEmailConfig = async (tokenOverride) => {
+    const activeToken = tokenOverride || adminToken || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('cf_admin_token') : '');
+    if (!activeToken) return;
+    try {
+      const res = await fetch(ENDPOINTS.ADMIN.EMAIL.CONFIG, {
+        headers: { Authorization: `Bearer ${activeToken}` },
+      });
+      const json = await res.json();
+      if (json.success && json.data) {
+        setEmailConfig((prev) => ({ ...prev, ...json.data, apiKey: '' }));
+        if (!emailTestAddr && json.data.adminEmail) setEmailTestAddr(json.data.adminEmail);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch email config:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen || !isAuthenticated || activeTab !== 'alerts') return;
+    fetchWaStatus();
+    fetchEmailConfig();
+    const interval = setInterval(() => { fetchWaStatus(); }, 5000);
+    return () => clearInterval(interval);
+  }, [isOpen, isAuthenticated, activeTab]);
+
+  const handleWaRestart = async () => {
+    setWaBusy(true);
+    try {
+      const res = await fetch(ENDPOINTS.ADMIN.WHATSAPP.RESTART, { method: 'POST', headers: getAuthOnlyHeaders() });
+      const data = await res.json();
+      showToast(data.message || 'WhatsApp bot restarted. Waiting for QR...');
+      setTimeout(() => fetchWaStatus(), 1500);
+    } catch (err) {
+      showToast('Failed to restart WhatsApp bot', 'error');
+    } finally {
+      setWaBusy(false);
+    }
+  };
+
+  const handleWaLogout = async () => {
+    if (!window.confirm('Unlink current WhatsApp device?')) return;
+    setWaBusy(true);
+    try {
+      const res = await fetch(ENDPOINTS.ADMIN.WHATSAPP.LOGOUT, { method: 'POST', headers: getAuthOnlyHeaders() });
+      const data = await res.json();
+      showToast(data.message || 'WhatsApp device unlinked.');
+      setTimeout(() => fetchWaStatus(), 1000);
+    } catch (err) {
+      showToast('Failed to unlink WhatsApp device', 'error');
+    } finally {
+      setWaBusy(false);
+    }
+  };
+
+  const handleWaTest = async (e) => {
+    e.preventDefault();
+    setWaBusy(true);
+    try {
+      const res = await fetch(ENDPOINTS.ADMIN.WHATSAPP.TEST, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ phone: waTestPhone }),
+      });
+      const data = await res.json();
+      if (data.success) showToast('Test WhatsApp message sent!');
+      else showToast(data.reason || data.message || 'WhatsApp not connected yet', 'error');
+    } catch (err) {
+      showToast('Error sending test WhatsApp message', 'error');
+    } finally {
+      setWaBusy(false);
+    }
+  };
+
+  const handleSaveEmailConfig = async (e) => {
+    e.preventDefault();
+    setEmailBusy(true);
+    try {
+      const res = await fetch(ENDPOINTS.ADMIN.EMAIL.CONFIG, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          ...(emailConfig.apiKey ? { apiKey: emailConfig.apiKey } : {}),
+          senderEmail: emailConfig.senderEmail,
+          senderName: emailConfig.senderName,
+          adminEmail: emailConfig.adminEmail,
+          enabled: emailConfig.enabled,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Brevo Email alert settings saved!');
+        fetchEmailConfig();
+      } else {
+        showToast(data.error || data.message || 'Failed to save email settings', 'error');
+      }
+    } catch (err) {
+      showToast('Failed to save email settings', 'error');
+    } finally {
+      setEmailBusy(false);
+    }
+  };
+
+  const handleSendTestEmail = async () => {
+    setEmailBusy(true);
+    try {
+      const res = await fetch(ENDPOINTS.ADMIN.EMAIL.TEST, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ email: emailTestAddr || emailConfig.adminEmail }),
+      });
+      const data = await res.json();
+      if (data.success) showToast('Test email dispatched successfully!');
+      else showToast(data.error || data.message || 'Failed to send test email', 'error');
+    } catch (err) {
+      showToast('Error sending test email', 'error');
+    } finally {
+      setEmailBusy(false);
+    }
+  };
+
+  const handleResendOrderWhatsApp = async (ord) => {
+    const st = normalizeOrderStatus(ord.status);
+    const type = st === 'Pending' ? 'Placed' : st;
+    try {
+      const res = await fetch(ENDPOINTS.ADMIN.WHATSAPP.RESEND(ord.orderId), {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ type }),
+      });
+      const data = await res.json();
+      if (data?.result?.success) {
+        showToast(`WhatsApp ${st} message sent to ${ord.customer?.phone}!`);
+      } else {
+        const waUrl = buildOrderWaUrl(ord);
+        showToast(`WhatsApp bot offline (${data?.result?.reason || 'Scan QR in Alerts tab'}). Opening wa.me link...`, 'error');
+        if (waUrl) window.open(waUrl, '_blank', 'noopener,noreferrer');
+      }
+    } catch (err) {
+      const waUrl = buildOrderWaUrl(ord);
+      if (waUrl) window.open(waUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   const fetchOrders = async (tokenOverride) => {
     const activeToken = tokenOverride || adminToken || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('cf_admin_token') : '');
     if (!activeToken) return;
@@ -332,9 +526,13 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
       });
       const data = await res.json();
       if (data.success) {
-        showToast(`Order #${orderId} marked as ${newStatus}`);
+        if ((newStatus === 'Dispatched' || newStatus === 'Return') && data.whatsappAutoSent === false) {
+          showToast(`Order #${orderId} marked as ${newStatus}. Auto-WhatsApp not linked (use Alerts tab QR or click WhatsApp button).`);
+        } else {
+          showToast(`Order #${orderId} marked as ${newStatus}`);
+        }
         setOrders((prev) =>
-          prev.map((o) => (o.orderId === orderId || o._id === orderId ? { ...o, status: newStatus } : o))
+          prev.map((o) => (o.orderId === orderId || o._id === orderId ? { ...(data.data || o), status: newStatus, whatsappNoticeUrl: data.whatsappNoticeUrl } : o))
         );
       } else {
         showToast(data.message || 'Failed to update status', 'error');
@@ -573,7 +771,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
 
   // Filtered orders
   const filteredOrders = orders.filter((o) => {
-    const matchesStatus = orderFilter === 'all' || o.status.toLowerCase() === orderFilter.toLowerCase();
+    const matchesStatus = orderFilter === 'all' || normalizeOrderStatus(o.status).toLowerCase() === orderFilter.toLowerCase();
     const matchesSearch =
       !orderSearch ||
       o.orderId.toLowerCase().includes(orderSearch.toLowerCase()) ||
@@ -1025,6 +1223,18 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
         </button>
 
         <button
+          onClick={() => setActiveTab('alerts')}
+          className={`pb-3 px-3 sm:px-4 text-xs sm:text-sm font-semibold border-b-2 transition flex items-center gap-1.5 shrink-0 cursor-pointer ${
+            activeTab === 'alerts'
+              ? 'border-[#1c1b18] text-[#1c1b18]'
+              : 'border-transparent text-[#78746a] hover:text-[#1c1b18]'
+          }`}
+        >
+          <MessageCircle className="w-4 h-4 text-emerald-600" />
+          <span>Alerts &amp; Bot</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('security')}
           className={`pb-3 px-3 sm:px-4 text-xs sm:text-sm font-semibold border-b-2 transition flex items-center gap-1.5 shrink-0 cursor-pointer ${
             activeTab === 'security' 
@@ -1059,7 +1269,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                 </div>
 
                 <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
-                  {['all', 'Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'].map((st) => (
+                  {['all', 'Pending', 'Dispatched', 'Return'].map((st) => (
                     <button
                       key={st}
                       onClick={() => setOrderFilter(st)}
@@ -1090,7 +1300,9 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
               ) : (
                 <div className="space-y-3.5">
                   {filteredOrders.map((ord) => {
-                    const cfg = STATUS_CONFIG[ord.status] || STATUS_CONFIG.Pending;
+                    const currentStatus = normalizeOrderStatus(ord.status);
+                    const cfg = STATUS_CONFIG[currentStatus] || STATUS_CONFIG.Pending;
+                    const waUrl = ord.whatsappNoticeUrl || buildOrderWaUrl(ord);
 
                     return (
                       <div
@@ -1108,22 +1320,42 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                             </span>
                           </div>
 
-                          {/* Status Modifier Dropdown */}
+                          {/* Status Modifier Dropdown & Quick WhatsApp Notice */}
                           <div className="flex items-center gap-2">
                             <div className="relative">
                               <select
-                                value={ord.status}
+                                value={currentStatus}
                                 onChange={(e) => handleStatusChange(ord.orderId, e.target.value)}
                                 className={`text-xs font-bold px-2.5 py-1 rounded-full border appearance-none pr-6 cursor-pointer focus:outline-none ${cfg.bg}`}
                               >
                                 <option value="Pending">Pending</option>
-                                <option value="Processing">Processing</option>
-                                <option value="Shipped">Shipped</option>
-                                <option value="Delivered">Delivered</option>
-                                <option value="Cancelled">Cancelled</option>
+                                <option value="Dispatched">Dispatched</option>
+                                <option value="Return">Return</option>
                               </select>
                               <ChevronDown className="w-3 h-3 absolute right-2 top-2 pointer-events-none opacity-60" />
                             </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleResendOrderWhatsApp(ord)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-[11px] font-semibold transition cursor-pointer"
+                              title="Send / Resend WhatsApp Notification"
+                            >
+                              <MessageCircle className="w-3 h-3" />
+                              <span>WhatsApp</span>
+                            </button>
+
+                            {waUrl && (
+                              <a
+                                href={waUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2 py-1 rounded-full border border-[#dedad0] bg-[#faf8f4] hover:bg-white text-[10px] font-semibold text-[#4a473f] transition"
+                                title="Open pre-filled WhatsApp message"
+                              >
+                                wa.me
+                              </a>
+                            )}
 
                             <button
                               onClick={() => handleDeleteOrder(ord.orderId)}
@@ -1170,17 +1402,17 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                                 </span>
                                 <span className="text-[#78746a] font-mono text-[11px]">x{item.qty}</span>
                               </div>
-                              <span className="font-mono text-[#1c1b18]">${(item.price * item.qty).toFixed(2)}</span>
+                              <span className="font-mono text-[#1c1b18]">{formatPkr(item.price * item.qty)}</span>
                             </div>
                           ))}
                         </div>
 
-                        {/* Financial Total */}
+                        {/* Financial Total (PKR) */}
                         <div className="flex justify-between items-center border-t border-[#f0eee6] pt-2 text-xs font-bold text-[#1c1b18]">
                           <span className="text-[#78746a] font-normal">
-                            Total (incl. {ord.shipping === 0 ? 'Free Shipping' : `$${ord.shipping} Shipping`})
+                            Total (incl. {ord.shipping === 0 ? 'Free Shipping' : `${formatPkr(ord.shipping)} Shipping`})
                           </span>
-                          <span className="font-mono text-sm">${ord.total.toFixed(2)}</span>
+                          <span className="font-mono text-sm">{formatPkr(ord.total)} PKR</span>
                         </div>
                       </div>
                     );
@@ -1280,12 +1512,12 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                         <h4 className="text-xs font-semibold text-[#1c1b18] truncate mt-0.5">{p.name}</h4>
                         <div className="flex items-baseline gap-2 mt-0.5">
                           <span className="text-xs font-mono font-bold text-[#1c1b18]">
-                            ${Number(p.price).toFixed(2)}
+                            {formatPkr(p.price)} PKR
                           </span>
                           {p.isOnSale && p.originalPrice > p.price && (
                             <>
                               <span className="text-[10px] font-mono text-[#9ca3af] line-through">
-                                ${Number(p.originalPrice).toFixed(2)}
+                                {formatPkr(p.originalPrice)}
                               </span>
                               <span className="text-[9px] font-bold text-rose-700 bg-rose-50 px-1 py-0.2 rounded border border-rose-200">
                                 -{Math.round(((p.originalPrice - p.price) / p.originalPrice) * 100)}% OFF
@@ -1382,7 +1614,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
 
                     {form.isOnSale && form.originalPrice && form.price && Number(form.originalPrice) > Number(form.price) && (
                       <span className="text-[11px] font-bold text-rose-700 bg-rose-100 border border-rose-300 px-2.5 py-0.5 rounded-full font-mono">
-                        Save ${(Number(form.originalPrice) - Number(form.price)).toFixed(2)} (-{Math.round(((Number(form.originalPrice) - Number(form.price)) / Number(form.originalPrice)) * 100)}% OFF)
+                        Save {formatPkr(Number(form.originalPrice) - Number(form.price))} (-{Math.round(((Number(form.originalPrice) - Number(form.price)) / Number(form.originalPrice)) * 100)}% OFF)
                       </span>
                     )}
                   </div>
@@ -1391,43 +1623,43 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                     <div className="grid grid-cols-2 gap-3 pt-1">
                       <div>
                         <label className="block text-[11px] font-semibold text-[#78746a] mb-1">
-                          Old / Original Price ($)
+                          Old / Original Price (PKR)
                         </label>
                         <input
                           type="number"
-                          step="0.01"
+                          step="1"
                           required={form.isOnSale}
                           value={form.originalPrice}
                           onChange={(e) => setForm({ ...form, originalPrice: e.target.value })}
-                          placeholder="e.g. 45.00"
+                          placeholder="e.g. 4500"
                           className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18]"
                         />
                       </div>
                       <div>
                         <label className="block text-[11px] font-semibold text-rose-700 mb-1">
-                          New Sale Price ($)
+                          New Sale Price (PKR)
                         </label>
                         <input
                           type="number"
-                          step="0.01"
+                          step="1"
                           required
                           value={form.price}
                           onChange={(e) => setForm({ ...form, price: e.target.value })}
-                          placeholder="e.g. 29.99"
+                          placeholder="e.g. 2999"
                           className="w-full text-xs p-2.5 rounded-xl border border-rose-300 bg-white text-[#1c1b18] focus:outline-none focus:border-rose-600 font-bold font-mono"
                         />
                       </div>
                     </div>
                   ) : (
                     <div>
-                      <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Regular Price ($)</label>
+                      <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Regular Price (PKR)</label>
                       <input
                         type="number"
-                        step="0.01"
+                        step="1"
                         required
                         value={form.price}
                         onChange={(e) => setForm({ ...form, price: e.target.value })}
-                        placeholder="29.99"
+                        placeholder="e.g. 2999"
                         className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] focus:outline-none focus:border-[#1c1b18] font-mono"
                       />
                     </div>
@@ -1911,6 +2143,199 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                   </div>
                 );
               })()}
+            </div>
+          )}
+
+          {/* TAB: WHATSAPP BOT & BREVO EMAIL ALERTS */}
+          {activeTab === 'alerts' && (
+            <div className="space-y-5">
+              {/* WhatsApp Bot Card */}
+              <div className="bg-white p-6 rounded-2xl border border-[#e5e2d6] shadow-xs space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center">
+                      <MessageCircle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-[#1c1b18]">Automated WhatsApp Bot (Baileys)</h3>
+                      <p className="text-xs text-[#78746a]">
+                        Link your store WhatsApp once via QR code to send automatic Placed &amp; Dispatched messages.
+                      </p>
+                    </div>
+                  </div>
+                  <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase font-mono border ${
+                    waStatus.status === 'connected'
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                      : waStatus.status === 'qr_ready'
+                      ? 'bg-amber-50 text-amber-800 border-amber-300'
+                      : 'bg-rose-50 text-rose-800 border-rose-300'
+                  }`}>
+                    {waStatus.status}{waStatus.connectedUser ? ` (+${waStatus.connectedUser})` : ''}
+                  </span>
+                </div>
+
+                {waStatus.status === 'qr_ready' && waStatus.qrDataUrl && (
+                  <div className="p-4 rounded-xl bg-[#faf8f4] border border-[#dedad0] flex flex-col sm:flex-row items-center gap-4">
+                    <img src={waStatus.qrDataUrl} alt="WhatsApp Link QR" className="w-44 h-44 rounded-xl border border-[#dedad0] bg-white p-1" />
+                    <div className="space-y-2 text-xs text-[#4a473f]">
+                      <p className="font-bold text-[#1c1b18] flex items-center gap-1.5">
+                        <QrCode className="w-4 h-4 text-emerald-600" />
+                        <span>Scan QR with WhatsApp on your phone</span>
+                      </p>
+                      <p>Open WhatsApp &rarr; Linked Devices &rarr; Link a Device, then scan this QR code.</p>
+                      <p className="text-[11px] text-[#78746a]">Auto-refreshing status every 5 seconds...</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => fetchWaStatus()}
+                    className="px-3 py-2 rounded-xl border border-[#dedad0] bg-[#faf8f4] hover:bg-white text-xs font-semibold text-[#1c1b18] flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Refresh Status</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={waBusy}
+                    onClick={handleWaRestart}
+                    className="px-3 py-2 rounded-xl bg-[#1c1b18] hover:bg-[#33312b] text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
+                  >
+                    Restart / Generate New QR
+                  </button>
+                  {waStatus.status === 'connected' && (
+                    <button
+                      type="button"
+                      disabled={waBusy}
+                      onClick={handleWaLogout}
+                      className="px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-800 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                    >
+                      Unlink Device
+                    </button>
+                  )}
+                </div>
+
+                <form onSubmit={handleWaTest} className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-[#f0eee6]">
+                  <input
+                    type="text"
+                    value={waTestPhone}
+                    onChange={(e) => setWaTestPhone(e.target.value)}
+                    placeholder="Test WhatsApp phone (e.g. 03269589597)"
+                    className="flex-1 text-xs p-2.5 rounded-xl border border-[#dedad0] bg-[#faf8f4] text-[#1c1b18] font-mono"
+                  />
+                  <button
+                    type="submit"
+                    disabled={waBusy}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Send Test WhatsApp</span>
+                  </button>
+                </form>
+              </div>
+
+              {/* Brevo Email Alerts Card */}
+              <div className="bg-white p-6 rounded-2xl border border-[#e5e2d6] shadow-xs space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 flex items-center justify-center">
+                      <Mail className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-[#1c1b18]">Brevo Order &amp; Dispatch Email Alerts</h3>
+                      <p className="text-xs text-[#78746a]">
+                        {emailConfig.apiKeyConfigured
+                          ? `API key active (${emailConfig.maskedApiKey})`
+                          : 'No Brevo API key configured on this live server yet.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <form onSubmit={handleSaveEmailConfig} className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Brevo API Key</label>
+                      <input
+                        type="password"
+                        value={emailConfig.apiKey}
+                        onChange={(e) => setEmailConfig({ ...emailConfig, apiKey: e.target.value })}
+                        placeholder={emailConfig.apiKeyConfigured ? 'Leave blank to keep existing key' : 'xkeysib-...'}
+                        className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-[#faf8f4] font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Admin Alert Email</label>
+                      <input
+                        type="email"
+                        required
+                        value={emailConfig.adminEmail}
+                        onChange={(e) => setEmailConfig({ ...emailConfig, adminEmail: e.target.value })}
+                        placeholder="cellfocusc21@gmail.com"
+                        className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-[#faf8f4]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Sender Email (Verified in Brevo)</label>
+                      <input
+                        type="email"
+                        required
+                        value={emailConfig.senderEmail}
+                        onChange={(e) => setEmailConfig({ ...emailConfig, senderEmail: e.target.value })}
+                        placeholder="cellfocusc21@gmail.com"
+                        className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-[#faf8f4]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-[#1c1b18] mb-1">Sender Name</label>
+                      <input
+                        type="text"
+                        value={emailConfig.senderName}
+                        onChange={(e) => setEmailConfig({ ...emailConfig, senderName: e.target.value })}
+                        placeholder="CellFocus Store Alerts"
+                        className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-[#faf8f4]"
+                      />
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-2 text-xs font-semibold text-[#1c1b18] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(emailConfig.enabled)}
+                      onChange={(e) => setEmailConfig({ ...emailConfig, enabled: e.target.checked })}
+                      className="w-4 h-4 rounded accent-[#1c1b18]"
+                    />
+                    <span>Enable automated order &amp; dispatch email alerts</span>
+                  </label>
+
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="submit"
+                      disabled={emailBusy}
+                      className="px-4 py-2.5 rounded-xl bg-[#1c1b18] hover:bg-[#33312b] text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      Save Email Settings
+                    </button>
+                    <input
+                      type="email"
+                      value={emailTestAddr}
+                      onChange={(e) => setEmailTestAddr(e.target.value)}
+                      placeholder="Test recipient email"
+                      className="text-xs px-3 py-2 rounded-xl border border-[#dedad0] bg-[#faf8f4]"
+                    />
+                    <button
+                      type="button"
+                      disabled={emailBusy}
+                      onClick={handleSendTestEmail}
+                      className="px-4 py-2.5 rounded-xl border border-[#dedad0] bg-[#faf8f4] hover:bg-white text-xs font-semibold text-[#1c1b18] cursor-pointer disabled:opacity-50"
+                    >
+                      Send Test Email
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
 

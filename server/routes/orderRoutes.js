@@ -100,16 +100,21 @@ router.post('/', orderCheckoutLimiter, async (req, res) => {
     });
 
     // Auto-dispatch WhatsApp confirmation message from CellFocus to customer
+    let waResult = { success: false, reason: 'Not attempted' };
     try {
-      await whatsappService.sendAutomatedWhatsApp(order, 'Placed');
+      waResult = await whatsappService.sendAutomatedWhatsApp(order, 'Placed');
     } catch (waErr) {
+      waResult = { success: false, reason: waErr.message };
       console.warn('[WhatsApp] Auto-dispatch failed:', waErr.message);
     }
 
-    // Auto-dispatch Brevo email notification alert to Store Admin
+    // Auto-dispatch Brevo email alerts to Store Admin & Customer
     try {
       brevoEmailService.sendNewOrderAlert(order).catch((emailErr) => {
-        console.warn('[Brevo Email] Async alert failed:', emailErr.message);
+        console.warn('[Brevo Email] Admin alert failed:', emailErr.message);
+      });
+      brevoEmailService.sendOrderConfirmationToCustomer(order).catch((emailErr) => {
+        console.warn('[Brevo Email] Customer confirmation failed:', emailErr.message);
       });
     } catch (emailErr) {
       console.warn('[Brevo Email] Alert dispatch error:', emailErr.message);
@@ -121,6 +126,8 @@ router.post('/', orderCheckoutLimiter, async (req, res) => {
       success: true,
       message: 'Order created successfully',
       data: order,
+      whatsappAutoSent: Boolean(waResult?.success),
+      whatsappReason: waResult?.reason || null,
       whatsappNoticeUrl,
     });
   } catch (error) {
@@ -131,8 +138,9 @@ router.post('/', orderCheckoutLimiter, async (req, res) => {
 // PATCH / PUT update order status (Admin Protected)
 router.patch('/:id/status', requireAdminAuth, async (req, res) => {
   try {
-    const { status } = req.body;
-    const validStatuses = ['Pending', 'Shipped', 'Dispatched', 'Dispached', 'Return', 'Processing', 'Delivered', 'Cancelled'];
+    const rawStatus = String(req.body.status || '').trim();
+    const status = rawStatus === 'Dispached' ? 'Dispatched' : rawStatus;
+    const validStatuses = ['Pending', 'Dispatched', 'Return'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -144,12 +152,22 @@ router.patch('/:id/status', requireAdminAuth, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    // Auto-dispatch WhatsApp dispatch notice if marked as Dispatched (or Delivered)
-    if (status === 'Dispatched' || status === 'Dispached' || status === 'Delivered') {
+    // Auto-dispatch WhatsApp & Email notice when marked as Dispatched or Return
+    let waResult = { success: false, reason: 'No message required for Pending' };
+    if (status === 'Dispatched' || status === 'Return') {
       try {
-        await whatsappService.sendAutomatedWhatsApp(updated, 'Dispatched');
+        waResult = await whatsappService.sendAutomatedWhatsApp(updated, status);
       } catch (waErr) {
-        console.warn('[WhatsApp] Dispatched auto-dispatch failed:', waErr.message);
+        waResult = { success: false, reason: waErr.message };
+        console.warn(`[WhatsApp] ${status} auto-dispatch failed:`, waErr.message);
+      }
+
+      try {
+        brevoEmailService.sendOrderStatusEmail(updated, status).catch((emailErr) => {
+          console.warn(`[Brevo Email] ${status} email failed:`, emailErr.message);
+        });
+      } catch (emailErr) {
+        console.warn(`[Brevo Email] ${status} dispatch error:`, emailErr.message);
       }
     }
 
@@ -159,6 +177,8 @@ router.patch('/:id/status', requireAdminAuth, async (req, res) => {
       success: true,
       message: 'Order status updated',
       data: updated,
+      whatsappAutoSent: Boolean(waResult?.success),
+      whatsappReason: waResult?.reason || null,
       whatsappNoticeUrl,
     });
   } catch (error) {

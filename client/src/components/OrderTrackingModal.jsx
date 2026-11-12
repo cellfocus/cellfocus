@@ -7,41 +7,22 @@ import { useCurrency } from '../context/CurrencyContext';
 import { ENDPOINTS } from '../config/api';
 
 const STATUS_STEPS = [
-  { key: 'Pending', label: 'Order Placed', desc: 'Received & Queued', icon: Clock },
-  { key: 'Shipped', label: 'Shipped', desc: 'Packed & In Transit', icon: Package },
-  { key: 'Dispatched', label: 'Dispatched', desc: 'With Courier Rider', icon: Truck },
+  { key: 'Pending', label: 'Pending', desc: 'Order Placed & Queued', icon: Clock },
+  { key: 'Dispatched', label: 'Dispatched', desc: 'Out With Courier Rider', icon: Truck },
 ];
 
 const STATUS_THEME = {
   Pending: {
     badge: 'bg-amber-50 text-amber-900 border-amber-300',
-    title: 'Order Placed & Confirmed',
-    message: 'Your order has been registered in our system and is queued for processing.',
+    title: 'Order Pending Confirmation',
+    message: 'Your order has been registered in our system and is queued for dispatch.',
     stepIndex: 0,
-  },
-  Shipped: {
-    badge: 'bg-indigo-50 text-indigo-900 border-indigo-300',
-    title: 'Shipped from Warehouse',
-    message: 'Your parcel has been packed and handed over to courier dispatch.',
-    stepIndex: 1,
   },
   Dispatched: {
     badge: 'bg-emerald-50 text-emerald-900 border-emerald-300',
     title: 'Dispatched & On the Way',
     message: 'Your parcel has been dispatched with our delivery rider and is out for delivery!',
-    stepIndex: 2,
-  },
-  Dispached: {
-    badge: 'bg-emerald-50 text-emerald-900 border-emerald-300',
-    title: 'Dispatched & On the Way',
-    message: 'Your parcel has been dispatched with our delivery rider and is out for delivery!',
-    stepIndex: 2,
-  },
-  Delivered: {
-    badge: 'bg-emerald-50 text-emerald-900 border-emerald-300',
-    title: 'Dispatched & On the Way',
-    message: 'Your parcel has been dispatched. Thank you for shopping with CellFocus!',
-    stepIndex: 2,
+    stepIndex: 1,
   },
   Return: {
     badge: 'bg-rose-50 text-rose-900 border-rose-300',
@@ -49,18 +30,12 @@ const STATUS_THEME = {
     message: 'This order is marked as Return. Our support team is handling the return process.',
     stepIndex: -1,
   },
-  Processing: {
-    badge: 'bg-blue-50 text-blue-900 border-blue-300',
-    title: 'Order In Process',
-    message: 'Our warehouse team is boxing your items securely for dispatch.',
-    stepIndex: 0,
-  },
-  Cancelled: {
-    badge: 'bg-rose-50 text-rose-900 border-rose-300',
-    title: 'Order Cancelled',
-    message: 'This order was cancelled. If you have questions, please reach out to CellFocus support.',
-    stepIndex: -1,
-  },
+};
+
+const normalizeStatus = (raw) => {
+  if (raw === 'Dispatched' || raw === 'Dispached' || raw === 'Shipped' || raw === 'Delivered') return 'Dispatched';
+  if (raw === 'Return' || raw === 'Cancelled') return 'Return';
+  return 'Pending';
 };
 
 const sanitizeTrackingId = (id) => {
@@ -123,8 +98,9 @@ export default function OrderTrackingModal({ isOpen, onClose, initialOrderId = '
     }
   };
 
-  const currentTheme = orderData?.status ? STATUS_THEME[orderData.status] || STATUS_THEME.Pending : STATUS_THEME.Pending;
-  const isCancelled = orderData?.status === 'Cancelled' || orderData?.status === 'Return';
+  const normalizedStatus = orderData?.status ? normalizeStatus(orderData.status) : 'Pending';
+  const currentTheme = STATUS_THEME[normalizedStatus] || STATUS_THEME.Pending;
+  const isCancelled = normalizedStatus === 'Return';
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
@@ -241,7 +217,7 @@ export default function OrderTrackingModal({ isOpen, onClose, initialOrderId = '
 
                   <span className={`px-3 py-1 rounded-full text-xs font-bold border flex items-center gap-1.5 ${currentTheme.badge}`}>
                     <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
-                    <span>{orderData.status}</span>
+                    <span>{normalizedStatus}</span>
                   </span>
                 </div>
 
@@ -250,10 +226,10 @@ export default function OrderTrackingModal({ isOpen, onClose, initialOrderId = '
                   <p className="text-[#78746a] text-[11px] mt-0.5">{currentTheme.message}</p>
                 </div>
 
-                {/* 3-Stage Stepper Bar */}
+                {/* 2-Stage Stepper Bar (Pending -> Dispatched) */}
                 {!isCancelled && (
                   <div className="pt-2">
-                    <div className="grid grid-cols-3 gap-2 relative">
+                    <div className="grid grid-cols-2 gap-4 relative max-w-sm mx-auto">
                       {STATUS_STEPS.map((step, idx) => {
                         const IconComponent = step.icon;
                         const isCompleted = idx <= currentTheme.stepIndex;

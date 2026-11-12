@@ -84,7 +84,11 @@ export default function CartDrawer({
       }
       const data = await res.json();
       if (res.ok && data.success) {
-        setPlacedOrder(data.data);
+        setPlacedOrder({
+          ...data.data,
+          whatsappNoticeUrl: data.whatsappNoticeUrl || null,
+          whatsappAutoSent: Boolean(data.whatsappAutoSent),
+        });
         setStep('success');
         onClearCart();
       } else {
@@ -166,6 +170,18 @@ export default function CartDrawer({
                 </div>
 
                 <div className="w-full space-y-2">
+                  {placedOrder.whatsappNoticeUrl && !placedOrder.whatsappAutoSent && (
+                    <a
+                      href={placedOrder.whatsappNoticeUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer transition flex items-center justify-center gap-1.5"
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                      <span>Confirm Order on WhatsApp</span>
+                    </a>
+                  )}
+
                   <button
                     type="button"
                     onClick={() => {

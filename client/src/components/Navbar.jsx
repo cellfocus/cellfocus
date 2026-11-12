@@ -83,6 +83,16 @@ export default function Navbar({ cartCount = 0, onCategoryClick, onOpenCart, onO
         ? '-translate-y-full opacity-0 pointer-events-none' 
         : 'translate-y-0 opacity-100 pointer-events-auto'
     }`}>
+      {/* Top Announcement Headline Bar */}
+      <div className="w-full bg-[#1c1b18] text-[#f6f5f0] border-b border-[#2f2d27] px-3 py-1.5 text-center">
+        <p className="text-[11px] sm:text-xs font-medium tracking-wide flex items-center justify-center gap-2 flex-wrap">
+          <Truck className="w-3.5 h-3.5 text-emerald-400 shrink-0 hidden sm:inline" />
+          <span>Free Delivery All Over Pakistan</span>
+          <span className="text-[#78746a]" aria-hidden="true">&bull;</span>
+          <span>Delivery Worldwide Is Also Available</span>
+        </p>
+      </div>
+
       <nav className="w-full max-w-7xl mx-auto px-4 sm:px-8 h-16 sm:h-20 flex items-center justify-between">
 
         {/* Brand Lockup */}

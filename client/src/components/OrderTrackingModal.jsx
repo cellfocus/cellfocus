@@ -310,7 +310,14 @@ export default function OrderTrackingModal({ isOpen, onClose, initialOrderId = '
                         )}
                         <div className="truncate">
                           <p className="font-medium text-[#1c1b18] truncate">{it.name}</p>
-                          <p className="text-[11px] text-[#78746a]">Qty: {it.qty}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                            <span className="text-[11px] text-[#78746a]">Qty: {it.qty}</span>
+                            {it.selectedColor && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-teal-800 bg-teal-50 border border-teal-200 px-1.5 py-0.2 rounded">
+                                Color: {it.selectedColor}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                       <span className="font-mono font-bold text-[#1c1b18] shrink-0">

@@ -5,6 +5,7 @@ const cleanWhatsAppPhone = (raw) => {
   if (!raw) return '';
   let digits = String(raw).replace(/\D/g, '');
   if (digits.startsWith('0092')) digits = digits.substring(2);
+  if (digits.startsWith('920') && digits.length >= 13) digits = '92' + digits.substring(3);
   if (digits.startsWith('0')) digits = '92' + digits.substring(1);
   if (digits.length === 10 && digits.startsWith('3')) digits = '92' + digits;
   return digits;
@@ -16,7 +17,10 @@ const formatOrderMessage = (order, type = 'Placed') => {
   const customerCity = order.customer?.city || '';
   const totalAmount = Number(order.total || 0).toLocaleString();
   const itemsList = (order.items || [])
-    .map((it) => `• ${it.name} (Qty: ${it.qty}) - Rs. ${(it.price * it.qty).toLocaleString()}`)
+    .map((it) => {
+      const color = it.selectedColor || it.color;
+      return `• ${it.name}${color ? ` [Color: ${color}]` : ''} (Qty: ${it.qty}) - Rs. ${(it.price * it.qty).toLocaleString()}`;
+    })
     .join('\n');
 
   if (type === 'Placed') {

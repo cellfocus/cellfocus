@@ -246,9 +246,15 @@ function App() {
     }
   }, [cartItems]);
 
-  const handleAddToCart = (product, qty = 1) => {
+  const upsertCartItem = (product, qty = 1) => {
     const pid = product.id || product._id;
-    const cartKey = product.selectedColor ? `${pid}::${product.selectedColor}` : String(pid);
+    const defaultColorObj = Array.isArray(product.colors)
+      ? product.colors.find((c) => c && typeof c.name === 'string' && c.name.trim())
+      : null;
+    const resolvedColor = product.selectedColor || defaultColorObj?.name || null;
+    const resolvedImage = product.image || defaultColorObj?.image || '';
+    const cartKey = resolvedColor ? `${pid}::${resolvedColor}` : String(pid);
+
     setCartItems((prev) => {
       const existing = prev.find((item) => (item.cartKey || item.id) === cartKey);
       if (existing) {
@@ -263,39 +269,22 @@ function App() {
           cartKey,
           name: product.name,
           price: Number(product.price),
-          image: product.image,
-          selectedColor: product.selectedColor || null,
-          qty: qty
-        }
+          image: resolvedImage,
+          selectedColor: resolvedColor,
+          qty,
+        },
       ];
     });
+  };
+
+  const handleAddToCart = (product, qty = 1) => {
+    upsertCartItem(product, qty);
     setCartInitialStep('cart');
     // Silently added to cart without opening side drawer (cart badge updates in Navbar)
   };
 
   const handleBuyNow = (product, qty = 1) => {
-    const pid = product.id || product._id;
-    const cartKey = product.selectedColor ? `${pid}::${product.selectedColor}` : String(pid);
-    setCartItems((prev) => {
-      const existing = prev.find((item) => (item.cartKey || item.id) === cartKey);
-      if (existing) {
-        return prev.map((item) =>
-          (item.cartKey || item.id) === cartKey ? { ...item, qty: item.qty + qty } : item
-        );
-      }
-      return [
-        ...prev,
-        {
-          id: pid,
-          cartKey,
-          name: product.name,
-          price: Number(product.price),
-          image: product.image,
-          selectedColor: product.selectedColor || null,
-          qty: qty
-        }
-      ];
-    });
+    upsertCartItem(product, qty);
     setDetailProduct(null);
     setCartInitialStep('checkout');
     setIsCartOpen(true);

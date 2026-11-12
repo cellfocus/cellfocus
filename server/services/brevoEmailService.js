@@ -73,6 +73,7 @@ class BrevoEmailService {
 
     const itemsRows = items.map((item) => {
       const itemTotal = (Number(item.price || 0) * Number(item.qty || 1)).toLocaleString();
+      const itemColor = item.selectedColor || item.color || '';
       const imgTag = item.image 
         ? `<img src="${item.image}" alt="${item.name}" style="width: 48px; height: 48px; border-radius: 8px; object-fit: cover; background: #f4f2ea; border: 1px solid #e5e2d6;" />` 
         : `<div style="width: 48px; height: 48px; border-radius: 8px; background: #eeebe2; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #78746a;">Item</div>`;
@@ -84,6 +85,7 @@ class BrevoEmailService {
           </td>
           <td style="padding: 12px 10px; border-bottom: 1px solid #f0eee6; vertical-align: middle;">
             <div style="font-size: 14px; font-weight: 600; color: #1c1b18; line-height: 1.3;">${item.name}</div>
+            ${itemColor ? `<div style="margin-top: 3px;"><span style="display: inline-block; background: #f0fdfa; color: #0f766e; border: 1px solid #99f6e4; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px;">Color: ${itemColor}</span></div>` : ''}
             <div style="font-size: 12px; color: #78746a; margin-top: 2px;">Qty: <strong style="color: #1c1b18;">${item.qty}</strong> × Rs. ${Number(item.price || 0).toLocaleString()}</div>
           </td>
           <td style="padding: 12px 0; border-bottom: 1px solid #f0eee6; vertical-align: middle; text-align: right; font-family: monospace; font-size: 14px; font-weight: 700; color: #1c1b18;">
@@ -295,7 +297,10 @@ class BrevoEmailService {
     const customerName = order.customer?.name || 'Valued Customer';
     const totalAmount = Math.round(Number(order.total || 0)).toLocaleString();
     const itemsHtml = (order.items || [])
-      .map((it) => `<li>${it.name} × ${it.qty} — <strong>Rs. ${Math.round(Number(it.price || 0) * Number(it.qty || 1)).toLocaleString()} PKR</strong></li>`)
+      .map((it) => {
+        const col = it.selectedColor || it.color || '';
+        return `<li>${it.name}${col ? ` <span style="color:#0f766e;font-weight:700;">[Color: ${col}]</span>` : ''} × ${it.qty} — <strong>Rs. ${Math.round(Number(it.price || 0) * Number(it.qty || 1)).toLocaleString()} PKR</strong></li>`;
+      })
       .join('');
 
     return this._postBrevoEmail({
@@ -333,6 +338,12 @@ class BrevoEmailService {
     const customerName = order.customer?.name || 'Valued Customer';
     const totalAmount = Math.round(Number(order.total || 0)).toLocaleString();
     const isDispatched = status === 'Dispatched';
+    const itemsHtml = (order.items || [])
+      .map((it) => {
+        const col = it.selectedColor || it.color || '';
+        return `<li>${it.name}${col ? ` <span style="color:#0f766e;font-weight:700;">[Color: ${col}]</span>` : ''} × ${it.qty} — <strong>Rs. ${Math.round(Number(it.price || 0) * Number(it.qty || 1)).toLocaleString()} PKR</strong></li>`;
+      })
+      .join('');
 
     return this._postBrevoEmail({
       apiKey: this.config.apiKey,
@@ -349,6 +360,7 @@ class BrevoEmailService {
           <p>${isDispatched
             ? `Great news! Your order <strong>#${orderId}</strong> has been handed over to our courier rider and is on the way to your address.`
             : `Your order <strong>#${orderId}</strong> status has been updated to <strong>${status}</strong>.`}</p>
+          ${itemsHtml ? `<ul>${itemsHtml}</ul>` : ''}
           <p><strong>Total (PKR):</strong> Rs. ${totalAmount} PKR</p>
           <p><strong>Delivery Address:</strong> ${order.customer?.address || ''}${order.customer?.city ? ', ' + order.customer.city : ''}</p>
           <p style="font-size: 12px; color: #78746a;">Questions? Reply via WhatsApp or call 0326 9589597.</p>

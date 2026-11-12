@@ -67,12 +67,16 @@ export default function CartDrawer({
 
     setIsSubmitting(true);
     try {
+      const normalizedItems = cartItems.map((item) => ({
+        ...item,
+        selectedColor: item.selectedColor || item.color || null,
+      }));
       const res = await fetch(API_ORDERS, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customer,
-          items: cartItems,
+          items: normalizedItems,
           subtotal,
           shipping,
           total,
@@ -154,7 +158,7 @@ export default function CartDrawer({
                   </p>
                 </div>
 
-                <div className="w-full p-4 rounded-xl bg-white border border-[#e5e2d6] text-left text-xs space-y-1.5 font-mono">
+                <div className="w-full p-4 rounded-xl bg-white border border-[#e5e2d6] text-left text-xs space-y-2 font-mono">
                   <div className="flex justify-between text-[#78746a]">
                     <span>Status:</span>
                     <span className="text-teal-700 font-bold bg-teal-50 px-2 py-0.5 rounded">{placedOrder.status}</span>
@@ -167,7 +171,26 @@ export default function CartDrawer({
                     <span>Deliver to:</span>
                     <span className="text-[#1c1b18] truncate max-w-[180px]">{placedOrder.customer.address}</span>
                   </div>
+                  {Array.isArray(placedOrder.items) && placedOrder.items.length > 0 && (
+                    <div className="border-t border-[#f0eee6] pt-2 space-y-1 font-sans">
+                      {placedOrder.items.map((it, idx) => (
+                        <div key={idx} className="flex items-center justify-between gap-2 text-[11px] text-[#4a473f]">
+                          <span className="truncate">
+                            {it.name}
+                            {it.selectedColor ? ` (${it.selectedColor})` : ''} ×{it.qty}
+                          </span>
+                          <span className="font-mono shrink-0">{formatPrice(it.price * it.qty)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
+
+                {placedOrder.whatsappAutoSent && (
+                  <p className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 w-full">
+                    WhatsApp confirmation sent from CellFocus to <strong>{placedOrder.customer.phone}</strong>.
+                  </p>
+                )}
 
                 <div className="w-full space-y-2">
                   {placedOrder.whatsappNoticeUrl && !placedOrder.whatsappAutoSent && (
@@ -292,6 +315,28 @@ export default function CartDrawer({
                     autoComplete="new-password"
                     className="w-full text-xs p-2.5 rounded-xl border border-[#dedad0] bg-white text-[#1c1b18] placeholder:text-[#a09c91] focus:outline-none focus:border-[#1c1b18]"
                   />
+                </div>
+
+                <div className="p-3 rounded-xl bg-white border border-[#e5e2d6] space-y-1.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#78746a]">
+                    Order Summary ({cartItems.reduce((a, b) => a + b.qty, 0)} items)
+                  </p>
+                  <div className="space-y-1 max-h-28 overflow-y-auto">
+                    {cartItems.map((it) => (
+                      <div key={it.cartKey || it.id} className="flex items-center justify-between gap-2 text-[11px] text-[#1c1b18]">
+                        <span className="truncate">
+                          {it.name}
+                          {it.selectedColor && (
+                            <span className="ml-1 inline-block px-1.5 py-0.2 rounded bg-teal-50 text-teal-800 border border-teal-200 text-[10px] font-semibold">
+                              {it.selectedColor}
+                            </span>
+                          )}
+                          <span className="text-[#78746a] ml-1 font-mono">x{it.qty}</span>
+                        </span>
+                        <span className="font-mono shrink-0">{formatPrice(it.price * it.qty)}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="pt-2 flex gap-2">

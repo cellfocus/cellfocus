@@ -33,12 +33,19 @@ const buildOrderWaUrl = (ord) => {
   if (!raw) return null;
   let digits = raw;
   if (digits.startsWith('0092')) digits = digits.slice(2);
+  if (digits.startsWith('920') && digits.length >= 13) digits = '92' + digits.slice(3);
   if (digits.startsWith('0')) digits = '92' + digits.slice(1);
   if (digits.length === 10 && digits.startsWith('3')) digits = '92' + digits;
   const st = normalizeOrderStatus(ord?.status);
+  const itemsText = (ord?.items || [])
+    .map((it) => {
+      const col = it.selectedColor || it.color;
+      return `• ${it.name}${col ? ` [Color: ${col}]` : ''} (Qty: ${it.qty})`;
+    })
+    .join('\n');
   const msg = st === 'Dispatched'
-    ? `Assalam-o-Alaikum ${ord?.customer?.name || 'Customer'}! Your CellFocus order #${ord?.orderId} has been DISPATCHED. Total COD: ${formatPkr(ord?.total)} PKR.`
-    : `Assalam-o-Alaikum ${ord?.customer?.name || 'Customer'}! Update on your CellFocus order #${ord?.orderId}: Status is ${st}. Total: ${formatPkr(ord?.total)} PKR.`;
+    ? `Assalam-o-Alaikum ${ord?.customer?.name || 'Customer'}! Your CellFocus order #${ord?.orderId} has been DISPATCHED.\n\n${itemsText}\n\nTotal COD: ${formatPkr(ord?.total)} PKR.`
+    : `Assalam-o-Alaikum ${ord?.customer?.name || 'Customer'}! Update on your CellFocus order #${ord?.orderId}: Status is ${st}.\n\n${itemsText}\n\nTotal: ${formatPkr(ord?.total)} PKR.`;
   return `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
 };
 
@@ -1442,22 +1449,30 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
 
                         {/* Ordered Items Preview */}
                         <div className="space-y-1.5 pt-1">
-                          {ord.items.map((item, idx) => (
-                            <div key={idx} className="flex items-center justify-between text-xs py-1">
-                              <div className="flex items-center gap-2">
-                                <img
-                                  src={item.image || 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=100&q=80'}
-                                  alt={item.name}
-                                  className="w-8 h-8 rounded-lg object-cover bg-[#f4f2ea]"
-                                />
-                                <span className="font-medium text-[#1c1b18] truncate max-w-[200px] sm:max-w-xs">
-                                  {item.name}
-                                </span>
-                                <span className="text-[#78746a] font-mono text-[11px]">x{item.qty}</span>
+                          {ord.items.map((item, idx) => {
+                            const itemColor = item.selectedColor || item.color;
+                            return (
+                              <div key={idx} className="flex items-center justify-between text-xs py-1 gap-2">
+                                <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                                  <img
+                                    src={item.image || 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=100&q=80'}
+                                    alt={item.name}
+                                    className="w-8 h-8 rounded-lg object-cover bg-[#f4f2ea] shrink-0"
+                                  />
+                                  <span className="font-medium text-[#1c1b18] truncate max-w-[180px] sm:max-w-xs">
+                                    {item.name}
+                                  </span>
+                                  {itemColor && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200 shrink-0">
+                                      Color: {itemColor}
+                                    </span>
+                                  )}
+                                  <span className="text-[#78746a] font-mono text-[11px] shrink-0">x{item.qty}</span>
+                                </div>
+                                <span className="font-mono text-[#1c1b18] shrink-0">{formatPkr(item.price * item.qty)}</span>
                               </div>
-                              <span className="font-mono text-[#1c1b18]">{formatPkr(item.price * item.qty)}</span>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
 
                         {/* Financial Total (PKR) */}

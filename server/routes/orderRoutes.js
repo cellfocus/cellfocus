@@ -72,6 +72,7 @@ router.get('/track/:id', trackingLimiter, async (req, res) => {
           qty: it.qty,
           price: it.price,
           image: it.image,
+          selectedColor: it.selectedColor || it.color || null,
         })),
         subtotal: order.subtotal,
         shipping: order.shipping,
@@ -90,9 +91,13 @@ router.post('/', orderCheckoutLimiter, async (req, res) => {
     if (!customer || !items || items.length === 0) {
       return res.status(400).json({ success: false, message: 'Customer details and items are required' });
     }
+    const normalizedItems = items.map((it) => ({
+      ...it,
+      selectedColor: it.selectedColor || it.color || null,
+    }));
     const order = await repo.createOrder({
       customer,
-      items,
+      items: normalizedItems,
       subtotal,
       shipping: shipping || 0,
       total: total || subtotal,

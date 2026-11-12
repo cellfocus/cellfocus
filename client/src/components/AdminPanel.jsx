@@ -4,7 +4,7 @@ import {
   X, Plus, Edit2, Trash2, Save, RefreshCw, Check, AlertCircle, 
   Package, ShoppingCart, Truck, Clock, CheckCircle, XCircle, Search, ChevronDown, User, Phone, MapPin, ArrowLeft,
   UploadCloud, Image as ImageIcon, Flame, Sparkles, Zap, ShieldCheck, Lock, Unlock, Key, Shield,
-  MessageCircle, Mail, Send, QrCode
+  MessageCircle, Mail, Send, QrCode, Download
 } from 'lucide-react';
 import defaultProducts from '../data/defaultProducts.json';
 import { API_BASE_URL, ENDPOINTS } from '../config/api';
@@ -411,6 +411,59 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
       else showToast(data.reason || data.message || 'WhatsApp not connected yet', 'error');
     } catch (err) {
       showToast('Error sending test WhatsApp message', 'error');
+    } finally {
+      setWaBusy(false);
+    }
+  };
+
+  const handleWaImportSession = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setWaBusy(true);
+    try {
+      const fileText = await file.text();
+      const parsed = JSON.parse(fileText);
+      const res = await fetch(ENDPOINTS.ADMIN.WHATSAPP.IMPORT_AUTH, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(parsed),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || 'WhatsApp session restored without QR scan!');
+        fetchWaStatus();
+      } else {
+        showToast(data.message || 'Failed to import WhatsApp session', 'error');
+      }
+    } catch (err) {
+      showToast('Invalid session JSON file: ' + err.message, 'error');
+    } finally {
+      setWaBusy(false);
+    }
+  };
+
+  const handleWaExportSession = async () => {
+    setWaBusy(true);
+    try {
+      const res = await fetch(ENDPOINTS.ADMIN.WHATSAPP.EXPORT_AUTH, {
+        headers: getAuthOnlyHeaders(),
+      });
+      const json = await res.json();
+      if (!json.success || !json.data) {
+        showToast(json.message || 'No linked session found to export', 'error');
+        return;
+      }
+      const blob = new Blob([JSON.stringify(json.data)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'baileys_auth_backup.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Downloaded baileys_auth_backup.json!');
+    } catch (err) {
+      showToast('Failed to export WhatsApp session', 'error');
     } finally {
       setWaBusy(false);
     }
@@ -2174,15 +2227,15 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                   </span>
                 </div>
 
-                {waStatus.status === 'qr_ready' && waStatus.qrDataUrl && (
+                {(waStatus.status === 'qr_ready' && (waStatus.qr || waStatus.qrDataUrl)) && (
                   <div className="p-4 rounded-xl bg-[#faf8f4] border border-[#dedad0] flex flex-col sm:flex-row items-center gap-4">
-                    <img src={waStatus.qrDataUrl} alt="WhatsApp Link QR" className="w-44 h-44 rounded-xl border border-[#dedad0] bg-white p-1" />
+                    <img src={waStatus.qr || waStatus.qrDataUrl} alt="WhatsApp Link QR" className="w-44 h-44 rounded-xl border border-[#dedad0] bg-white p-1" />
                     <div className="space-y-2 text-xs text-[#4a473f]">
                       <p className="font-bold text-[#1c1b18] flex items-center gap-1.5">
                         <QrCode className="w-4 h-4 text-emerald-600" />
                         <span>Scan QR with WhatsApp on your phone</span>
                       </p>
-                      <p>Open WhatsApp &rarr; Linked Devices &rarr; Link a Device, then scan this QR code.</p>
+                      <p>Open WhatsApp &rarr; Linked Devices &rarr; Link a Device, then scan this QR code &mdash; OR upload your saved <code>baileys_auth_backup.json</code> below to connect without rescanning.</p>
                       <p className="text-[11px] text-[#78746a]">Auto-refreshing status every 5 seconds...</p>
                     </div>
                   </div>
@@ -2204,6 +2257,26 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                     className="px-3 py-2 rounded-xl bg-[#1c1b18] hover:bg-[#33312b] text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
                   >
                     Restart / Generate New QR
+                  </button>
+                  <label className="px-3 py-2 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Import Existing Session (.json)</span>
+                    <input
+                      type="file"
+                      accept=".json,application/json"
+                      disabled={waBusy}
+                      onChange={handleWaImportSession}
+                      className="hidden"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={waBusy}
+                    onClick={handleWaExportSession}
+                    className="px-3 py-2 rounded-xl border border-[#dedad0] bg-[#faf8f4] hover:bg-white text-[#1c1b18] text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Backup Session</span>
                   </button>
                   {waStatus.status === 'connected' && (
                     <button

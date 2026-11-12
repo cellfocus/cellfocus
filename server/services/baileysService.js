@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const zlib = require('zlib');
 const QRCode = require('qrcode');
 const pino = require('pino');
 
@@ -18,6 +19,30 @@ if (!fs.existsSync(AUTH_DIR)) {
   fs.mkdirSync(AUTH_DIR, { recursive: true });
 }
 
+const SAFE_AUTH_FILENAME_RE = /^[a-zA-Z0-9._@-]+$/;
+
+function sanitizeSessionFileMap(filesObj) {
+  if (!filesObj || typeof filesObj !== 'object' || Array.isArray(filesObj)) {
+    throw new Error('Invalid session file bundle.');
+  }
+  const clean = {};
+  for (const [name, content] of Object.entries(filesObj)) {
+    if (
+      typeof name !== 'string' ||
+      !SAFE_AUTH_FILENAME_RE.test(name) ||
+      name.includes('..') ||
+      typeof content !== 'string'
+    ) {
+      throw new Error(`Invalid session entry: ${name}`);
+    }
+    clean[name] = content;
+  }
+  if (!clean['creds.json']) {
+    throw new Error('Session bundle is missing creds.json.');
+  }
+  return clean;
+}
+
 class BaileysManager {
   constructor() {
     this.sock = null;
@@ -29,6 +54,93 @@ class BaileysManager {
     this.reconnectTimer = null;
     this.isConnecting = false;
     this.logger = pino({ level: 'silent' });
+  }
+
+  _writeAuthFiles(fileMap) {
+    const cleanFiles = sanitizeSessionFileMap(fileMap);
+    fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+    fs.mkdirSync(AUTH_DIR, { recursive: true });
+    const entries = Object.entries(cleanFiles);
+    for (const [name, content] of entries) {
+      fs.writeFileSync(path.join(AUTH_DIR, name), content, 'utf8');
+    }
+    return entries.length;
+  }
+
+  restoreFromEnvIfNeeded() {
+    try {
+      const credsPath = path.join(AUTH_DIR, 'creds.json');
+      const envB64 = (process.env.WHATSAPP_AUTH_GZ_B64 || '').trim();
+      if (!fs.existsSync(credsPath) && envB64) {
+        const jsonStr = zlib.gunzipSync(Buffer.from(envB64, 'base64')).toString('utf8');
+        const fileMap = JSON.parse(jsonStr);
+        const count = this._writeAuthFiles(fileMap);
+        console.log(`[Baileys] Restored ${count} session files from WHATSAPP_AUTH_GZ_B64 env.`);
+      }
+    } catch (err) {
+      console.error('[Baileys] Failed to restore session from WHATSAPP_AUTH_GZ_B64:', err.message);
+    }
+  }
+
+  exportAuthState() {
+    if (!fs.existsSync(AUTH_DIR)) {
+      throw new Error('WhatsApp auth directory does not exist.');
+    }
+    const entries = fs.readdirSync(AUTH_DIR);
+    const fileMap = {};
+    for (const name of entries) {
+      const fp = path.join(AUTH_DIR, name);
+      if (fs.statSync(fp).isFile() && SAFE_AUTH_FILENAME_RE.test(name)) {
+        fileMap[name] = fs.readFileSync(fp, 'utf8');
+      }
+    }
+    if (!fileMap['creds.json']) {
+      throw new Error('No linked WhatsApp session (creds.json) found to export.');
+    }
+    const creds = JSON.parse(fileMap['creds.json']);
+    const gzBuffer = zlib.gzipSync(Buffer.from(JSON.stringify(fileMap), 'utf8'));
+    return {
+      format: 'baileys-gz-v1',
+      exportedAt: new Date().toISOString(),
+      connectedUser: this.connectedUser || (creds?.me?.id ? String(creds.me.id).split(':')[0] : null),
+      fileCount: Object.keys(fileMap).length,
+      archiveGzBase64: gzBuffer.toString('base64'),
+    };
+  }
+
+  async importAuthState(payload) {
+    let fileMap = null;
+    if (payload && typeof payload.archiveGzBase64 === 'string' && payload.archiveGzBase64.trim()) {
+      const jsonStr = zlib.gunzipSync(Buffer.from(payload.archiveGzBase64.trim(), 'base64')).toString('utf8');
+      fileMap = JSON.parse(jsonStr);
+    } else if (payload && payload.files && typeof payload.files === 'object') {
+      fileMap = payload.files;
+    } else {
+      throw new Error('Provide a valid baileys_auth_backup.json payload.');
+    }
+
+    this.cleanupSocket();
+    this.isConnecting = false;
+    this.status = 'disconnected';
+    this.qrDataUrl = null;
+    this.rawQR = null;
+    this.connectedUser = null;
+    this.reconnectAttempts = 0;
+
+    const importedFiles = this._writeAuthFiles(fileMap);
+    console.log(`[Baileys] Imported ${importedFiles} existing WhatsApp session files. Connecting...`);
+    await this.init(true);
+    await this.waitForConnection(8000);
+    return {
+      success: true,
+      importedFiles,
+      status: this.status,
+      connectedUser: this.connectedUser,
+      message:
+        this.status === 'connected'
+          ? `WhatsApp session restored & connected (+${this.connectedUser}) without QR scan!`
+          : `Imported ${importedFiles} session files. Bot is connecting (${this.status})...`,
+    };
   }
 
   cleanupSocket() {
@@ -64,6 +176,7 @@ class BaileysManager {
     this.cleanupSocket();
 
     try {
+      this.restoreFromEnvIfNeeded();
       this.status = 'connecting';
       const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 

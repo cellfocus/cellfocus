@@ -46,6 +46,8 @@ export const ENDPOINTS = {
       LOGOUT: `${API_BASE_URL}/api/admin/whatsapp/logout`,
       TEST: `${API_BASE_URL}/api/admin/whatsapp/test`,
       RESEND: (id) => `${API_BASE_URL}/api/admin/whatsapp/resend/${encodeURIComponent(id)}`,
+      EXPORT_AUTH: `${API_BASE_URL}/api/admin/whatsapp/export-auth`,
+      IMPORT_AUTH: `${API_BASE_URL}/api/admin/whatsapp/import-auth`,
     },
     EMAIL: {
       CONFIG: `${API_BASE_URL}/api/admin/email/config`,

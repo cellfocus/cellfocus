@@ -489,6 +489,26 @@ router.post('/whatsapp/resend/:orderId', requireAdminAuth, async (req, res) => {
   }
 });
 
+// GET Export Linked WhatsApp Session Backup (Admin Protected)
+router.get('/whatsapp/export-auth', requireAdminAuth, (req, res) => {
+  try {
+    const bundle = baileysManager.exportAuthState();
+    res.json({ success: true, data: bundle });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+// POST Import Linked WhatsApp Session Backup without Rescanning QR (Admin Protected)
+router.post('/whatsapp/import-auth', requireAdminAuth, async (req, res) => {
+  try {
+    const result = await baileysManager.importAuthState(req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
 // ==========================================
 // Brevo Email Alert Endpoints
 // ==========================================

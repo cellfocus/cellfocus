@@ -2227,6 +2227,22 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                   </span>
                 </div>
 
+                {waStatus.status !== 'connected' && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1">
+                    <p className="font-semibold">
+                      {waStatus.hasSession === false
+                        ? 'No WhatsApp session is stored on the live server yet — automated WhatsApp messages are currently paused.'
+                        : `WhatsApp bot is ${waStatus.status} (not ready to auto-send yet).`}
+                    </p>
+                    {waStatus.lastError && (
+                      <p className="text-[11px] font-mono text-rose-700">Last error: {waStatus.lastError}</p>
+                    )}
+                    <p className="text-[11px] text-amber-800">
+                      Click <strong>Import Existing Session (.json)</strong> below and choose <code>server/data/baileys_auth_backup.json</code> (no QR rescan needed).
+                    </p>
+                  </div>
+                )}
+
                 {(waStatus.status === 'qr_ready' && (waStatus.qr || waStatus.qrDataUrl)) && (
                   <div className="p-4 rounded-xl bg-[#faf8f4] border border-[#dedad0] flex flex-col sm:flex-row items-center gap-4">
                     <img src={waStatus.qr || waStatus.qrDataUrl} alt="WhatsApp Link QR" className="w-44 h-44 rounded-xl border border-[#dedad0] bg-white p-1" />

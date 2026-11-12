@@ -53,6 +53,7 @@ class BaileysManager {
     this.reconnectAttempts = 0;
     this.reconnectTimer = null;
     this.isConnecting = false;
+    this.lastError = null;
     this.logger = pino({ level: 'silent' });
   }
 
@@ -221,6 +222,9 @@ class BaileysManager {
           const statusCode = lastDisconnect?.error?.output?.statusCode;
           const isLoggedOut = statusCode === DisconnectReason?.loggedOut;
           const isReplaced = statusCode === DisconnectReason?.connectionReplaced || statusCode === 440;
+          this.lastError = lastDisconnect?.error?.message
+            ? `${lastDisconnect.error.message}${statusCode ? ` (code ${statusCode})` : ''}`
+            : (statusCode ? `Disconnect code ${statusCode}` : 'Connection closed');
 
           console.log(`[Baileys] Connection closed. Reason code: ${statusCode}. Logged out? ${isLoggedOut}. Replaced? ${isReplaced}`);
 
@@ -248,6 +252,7 @@ class BaileysManager {
           this.status = 'connected';
           this.qrDataUrl = null;
           this.rawQR = null;
+          this.lastError = null;
           this.reconnectAttempts = 0;
 
           const userJid = this.sock.user?.id || '';
@@ -265,6 +270,7 @@ class BaileysManager {
       console.error('[Baileys] Init error:', err.message);
       this.isConnecting = false;
       this.status = 'disconnected';
+      this.lastError = err.message;
     }
   }
 
@@ -280,6 +286,8 @@ class BaileysManager {
     return {
       status: this.status,
       connectedUser: this.connectedUser,
+      hasSession: fs.existsSync(path.join(AUTH_DIR, 'creds.json')),
+      lastError: this.lastError,
       hasQR: !!this.qrDataUrl,
       qr: this.qrDataUrl,
     };

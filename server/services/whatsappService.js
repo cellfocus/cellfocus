@@ -130,18 +130,17 @@ const sendAutomatedWhatsApp = async (order, type = 'Placed') => {
     }
   }
 
-  // Default / Development Logger
-  console.log(`\n================== [CELLFOCUS WHATSAPP DISPATCH] ==================`);
-  console.log(`Type:       ${type}`);
-  console.log(`To Phone:   +${phone} (${order.customer?.name})`);
-  console.log(`Order ID:   #${order.orderId}`);
-  console.log(`Message:\n${message}`);
-  console.log(`Direct Link: https://wa.me/${phone}?text=...`);
-  console.log(`===================================================================\n`);
+  // No active provider sent the message
+  const botStatus = baileysManager ? baileysManager.status : 'unavailable';
+  const lastErr = baileysManager?.lastError ? ` (${baileysManager.lastError})` : '';
+  console.warn(
+    `[WhatsApp] Not sent automatically for Order #${order.orderId} (+${phone}) — Baileys status: ${botStatus}${lastErr}`
+  );
 
   return {
-    success: true,
-    provider: 'simulated_or_ready',
+    success: false,
+    provider: 'none',
+    reason: `WhatsApp bot is ${botStatus}${lastErr}`,
     phone,
     orderId: order.orderId,
     type,

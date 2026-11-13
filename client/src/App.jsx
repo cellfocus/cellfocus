@@ -4,14 +4,16 @@ import Navbar from './components/Navbar';
 import HeroSection from './components/HeroSection';
 import ProductGrid from './components/ProductGrid';
 import CartDrawer from './components/CartDrawer';
-import AdminPanel from './components/AdminPanel';
 import Footer from './components/Footer';
 import ThreadsLoader from './components/ThreadsLoader';
 import PageSkeleton from './components/PageSkeleton';
-import ProductDetailModal from './components/ProductDetailModal';
-import OrderTrackingModal from './components/OrderTrackingModal';
 import WhatsAppButton from './components/WhatsAppButton';
 import SEOHead from './components/SEOHead';
+
+// Lazy-loaded heavy modal and admin components for optimal initial bundle & instant TTI
+const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
+const ProductDetailModal = React.lazy(() => import('./components/ProductDetailModal'));
+const OrderTrackingModal = React.lazy(() => import('./components/OrderTrackingModal'));
 
 // Cryptographically secure GUID / UUID token for legacy Admin Portal Access
 const ADMIN_SECURE_TOKEN = '8f92a4e1-7c5b-4d63-91e8-2a0f6d3b4e71';
@@ -53,15 +55,22 @@ function isAdminEntryUrl() {
 
 function App() {
   const initialAdminEntry = isAdminEntryUrl();
-  // Staged initial load: skip splash/skeleton when opening Admin directly for instant access
-  const [loadingStage, setLoadingStage] = useState(initialAdminEntry ? 'ready' : 'loader');
+  const isReturningVisitor = typeof window !== 'undefined' && (
+    initialAdminEntry || Boolean(sessionStorage.getItem('cf_visited'))
+  );
+
+  // Staged initial load: instant 0ms 'ready' for reloads & returning sessions; sleek brief intro on cold visit
+  const [loadingStage, setLoadingStage] = useState(isReturningVisitor ? 'ready' : 'loader');
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('cf_visited', 'true');
+    } catch (e) {}
+  }, []);
 
   useEffect(() => {
     if (loadingStage === 'skeleton') {
-      const timer = setTimeout(() => {
-        setLoadingStage('ready');
-      }, 2000);
-      return () => clearTimeout(timer);
+      setLoadingStage('ready');
     }
   }, [loadingStage]);
 
@@ -339,31 +348,31 @@ function App() {
       {/* Dynamic SEO Head with schema and meta tags */}
       <SEOHead category={selectedCategory} product={detailProduct} />
       
-      {/* Global Seamless Blended Background Aura across entire website */}
-      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+      {/* Global Seamless Blended Background Aura across entire website (GPU accelerated for 120fps scrolling) */}
+      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden transform-gpu will-change-transform">
         {/* Top-Right Luminous Cyan #00FFFF Aura */}
-        <div className="absolute -top-32 -right-32 w-[720px] h-[720px] bg-gradient-to-bl from-[#00FFFF]/16 via-[#00FFFF]/[0.06] to-transparent rounded-full blur-[130px]" />
+        <div className="absolute -top-32 -right-32 w-[720px] h-[720px] bg-gradient-to-bl from-[#00FFFF]/16 via-[#00FFFF]/[0.06] to-transparent rounded-full blur-[130px] transform-gpu will-change-transform" />
         
         {/* Mid-Left Warm Golden Amber/Cream Glow */}
-        <div className="absolute top-[28%] -left-40 w-[680px] h-[680px] bg-gradient-to-tr from-amber-200/30 via-[#00FFFF]/[0.05] to-transparent rounded-full blur-[140px]" />
+        <div className="absolute top-[28%] -left-40 w-[680px] h-[680px] bg-gradient-to-tr from-amber-200/30 via-[#00FFFF]/[0.05] to-transparent rounded-full blur-[140px] transform-gpu will-change-transform" />
         
         {/* Mid-Right Radiant Cyan Accent */}
-        <div className="absolute top-[62%] -right-32 w-[620px] h-[620px] bg-gradient-to-l from-[#00FFFF]/14 to-transparent rounded-full blur-[130px]" />
+        <div className="absolute top-[62%] -right-32 w-[620px] h-[620px] bg-gradient-to-l from-[#00FFFF]/14 to-transparent rounded-full blur-[130px] transform-gpu will-change-transform" />
         
         {/* Bottom Ambient Warm Cream & Cyan Glow */}
-        <div className="absolute -bottom-40 left-1/4 w-[720px] h-[720px] bg-gradient-to-t from-amber-100/35 via-[#00FFFF]/[0.05] to-transparent rounded-full blur-[150px]" />
+        <div className="absolute -bottom-40 left-1/4 w-[720px] h-[720px] bg-gradient-to-t from-amber-100/35 via-[#00FFFF]/[0.05] to-transparent rounded-full blur-[150px] transform-gpu will-change-transform" />
       </div>
 
-      {/* Stage 1: Monotone Animated Loader (3 seconds) */}
+      {/* Stage 1: Monotone Animated Loader (sleek 650ms for cold session only) */}
       {loadingStage === 'loader' && (
-        <ThreadsLoader minDuration={3000} onFinished={() => setLoadingStage('skeleton')} />
+        <ThreadsLoader minDuration={650} onFinished={() => setLoadingStage('ready')} />
       )}
 
       {/* While in 'loader' or 'skeleton' stage, render ONLY the PageSkeleton so the real web page never flashes early */}
       {loadingStage === 'loader' || loadingStage === 'skeleton' ? (
         <PageSkeleton />
       ) : (
-        /* Stage 3: Live Interactive Storefront (revealed only after skeleton finishes) */
+        /* Stage 3: Live Interactive Storefront (revealed immediately) */
         <>
           {/* Hero Zone Container: scoped sticky scroll */}
           <div className="relative w-full">
@@ -402,36 +411,42 @@ function App() {
             onOpenTracking={handleOpenTracking}
           />
 
-          {/* Dedicated Full Product Description / Specs / Policies Modal */}
-          <ProductDetailModal
-            product={detailProduct}
-            isOpen={Boolean(detailProduct)}
-            onClose={handleCloseDetail}
-            onAddToCart={handleAddToCart}
-            onBuyNow={handleBuyNow}
-          />
+          {/* Lazy Loaded Overlays (Admin & Modals) - zero bundle overhead on initial load */}
+          <React.Suspense fallback={null}>
+            {Boolean(detailProduct) && (
+              <ProductDetailModal
+                product={detailProduct}
+                isOpen={Boolean(detailProduct)}
+                onClose={handleCloseDetail}
+                onAddToCart={handleAddToCart}
+                onBuyNow={handleBuyNow}
+              />
+            )}
 
-          {/* Full-Stack Admin CRUD Side Panel */}
-          <AdminPanel
-            isOpen={isAdminOpen}
-            onClose={() => {
-              setIsAdminOpen(false);
-              try {
-                const path = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
-                if (ADMIN_PATH_SLUGS.includes(path)) {
-                  window.history.replaceState({}, document.title, '/');
-                }
-              } catch (e) {}
-            }}
-            onProductsChanged={() => setRefreshTrigger((prev) => prev + 1)}
-          />
+            {isAdminOpen && (
+              <AdminPanel
+                isOpen={isAdminOpen}
+                onClose={() => {
+                  setIsAdminOpen(false);
+                  try {
+                    const path = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+                    if (ADMIN_PATH_SLUGS.includes(path)) {
+                      window.history.replaceState({}, document.title, '/');
+                    }
+                  } catch (e) {}
+                }}
+                onProductsChanged={() => setRefreshTrigger((prev) => prev + 1)}
+              />
+            )}
 
-          {/* Customer Live Order Tracking Modal */}
-          <OrderTrackingModal
-            isOpen={isTrackingOpen}
-            onClose={() => setIsTrackingOpen(false)}
-            initialOrderId={trackingInitialId}
-          />
+            {isTrackingOpen && (
+              <OrderTrackingModal
+                isOpen={isTrackingOpen}
+                onClose={() => setIsTrackingOpen(false)}
+                initialOrderId={trackingInitialId}
+              />
+            )}
+          </React.Suspense>
 
           {/* Complete E-Commerce Storefront Footer */}
           <Footer

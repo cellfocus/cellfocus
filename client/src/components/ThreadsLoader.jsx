@@ -8,7 +8,7 @@ import React, { useState, useEffect } from 'react';
  * - Identical font family and tracking as the Navbar
  * - Smooth Sea Green progress line
  */
-export default function ThreadsLoader({ minDuration = 3000, onFinished }) {
+export default function ThreadsLoader({ minDuration = 650, onFinished }) {
   const [phase, setPhase] = useState('active'); // 'active' -> 'exiting' -> 'done'
 
   useEffect(() => {

@@ -2,6 +2,31 @@ const express = require('express');
 const router = express.Router();
 const repo = require('../storage');
 
+function resolveSiteUrl() {
+  const raw =
+    process.env.SITE_URL ||
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.BASE_URL ||
+    process.env.DOMAIN ||
+    'https://www.cellfocusaccessories.com';
+  let clean = String(raw).trim().replace(/\/+$/, '');
+  // Canonicalize old domain or non-www variant to primary production domain
+  if (
+    clean.includes('cellfocus.pk') ||
+    clean === 'https://cellfocusaccessories.com' ||
+    clean === 'http://cellfocusaccessories.com'
+  ) {
+    clean = 'https://www.cellfocusaccessories.com';
+  }
+  return clean;
+}
+
+// Helper to remove any URL hash fragment (RFC/Google Sitemaps reject fragments)
+function stripHash(url) {
+  if (!url) return '';
+  return String(url).split('#')[0];
+}
+
 // Helper to escape XML characters
 function escapeXml(unsafe) {
   if (!unsafe) return '';
@@ -25,128 +50,143 @@ function createSlug(name) {
 /**
  * Dynamic XML Sitemap endpoint
  * Returns a complete, valid XML sitemap including static routes, categories, and dynamic products.
+ * Guarantees all <loc> entries use the canonical domain and contain NO hash fragments.
  */
 router.get('/sitemap.xml', async (req, res) => {
   try {
-    const baseUrl = process.env.SITE_URL || 'https://cellfocus.pk';
+    const baseUrl = resolveSiteUrl();
     const products = await repo.getAllProducts();
     const today = new Date().toISOString().split('T')[0];
 
-    let xml = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
-        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
-        xmlns:xhtml="http://www.w3.org/1999/xhtml">
-  
-  <!-- Primary Storefront -->
-  <url>
-    <loc>${baseUrl}/</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>1.0</priority>
-    <xhtml:link rel="alternate" hreflang="en-pk" href="${baseUrl}/" />
-    <xhtml:link rel="alternate" hreflang="ur-pk" href="${baseUrl}/" />
-    <image:image>
-      <image:loc>${baseUrl}/hero-cellfocus-airpods-pro.jpg</image:loc>
-      <image:title>CellFocus Original Wireless Earpods Pakistan</image:title>
-    </image:image>
-  </url>
+    const seenLocs = new Set();
+    let entriesXml = '';
 
-  <!-- Categories -->
-  <url>
-    <loc>${baseUrl}/?category=chargers#products</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/?category=airpods#products</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/?category=handsfree#products</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/?category=smartwatches#products</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/?category=powerbanks#products</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.9</priority>
-  </url>
+    const addEntry = ({ loc, lastmod = today, changefreq = 'daily', priority = '0.8', images = [], alternates = [] }) => {
+      const cleanLoc = stripHash(loc);
+      if (!cleanLoc || seenLocs.has(cleanLoc)) return;
+      seenLocs.add(cleanLoc);
 
-  <!-- High-Intent Landing Sections -->
-  <url>
-    <loc>${baseUrl}/#bulk</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.85</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/#best-sellers</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.85</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/#why-us</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/#faq</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/#returns</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/#contact</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.65</priority>
-  </url>
-`;
+      let entry = '  <url>\n';
+      entry += `    <loc>${escapeXml(cleanLoc)}</loc>\n`;
+      entry += `    <lastmod>${lastmod}</lastmod>\n`;
+      entry += `    <changefreq>${changefreq}</changefreq>\n`;
+      entry += `    <priority>${priority}</priority>\n`;
 
-    // Append dynamic products
-    if (Array.isArray(products)) {
-      products.forEach((p) => {
-        const pid = p.id || p._id;
-        const slug = createSlug(p.name);
-        const pUrl = `${baseUrl}/?product=${encodeURIComponent(slug)}&amp;id=${encodeURIComponent(pid)}`;
-        const lastMod = p.updatedAt ? new Date(p.updatedAt).toISOString().split('T')[0] : today;
-        const imageUrl = p.image && p.image.startsWith('http') ? escapeXml(p.image) : `${baseUrl}/logo.png`;
+      for (const alt of alternates) {
+        entry += `    <xhtml:link rel="alternate" hreflang="${escapeXml(alt.hreflang)}" href="${escapeXml(stripHash(alt.href))}" />\n`;
+      }
 
-        xml += `  <url>
-    <loc>${pUrl}</loc>
-    <lastmod>${lastMod}</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-    <image:image>
-      <image:loc>${imageUrl}</image:loc>
-      <image:title>${escapeXml(p.name)} - CellFocus Pakistan Wholesale &amp; Retail</image:title>
-      <image:caption>${escapeXml(p.description || p.name)}</image:caption>
-    </image:image>
-  </url>
-`;
+      for (const img of images) {
+        if (!img || !img.loc) continue;
+        entry += '    <image:image>\n';
+        entry += `      <image:loc>${escapeXml(stripHash(img.loc))}</image:loc>\n`;
+        if (img.title) entry += `      <image:title>${escapeXml(img.title)}</image:title>\n`;
+        if (img.caption) entry += `      <image:caption>${escapeXml(img.caption)}</image:caption>\n`;
+        entry += '    </image:image>\n';
+      }
+
+      entry += '  </url>\n';
+      entriesXml += entry;
+    };
+
+    // 1. Primary Storefront Homepage
+    addEntry({
+      loc: `${baseUrl}/`,
+      priority: '1.0',
+      changefreq: 'daily',
+      alternates: [
+        { hreflang: 'en-pk', href: `${baseUrl}/` },
+        { hreflang: 'ur-pk', href: `${baseUrl}/` },
+        { hreflang: 'x-default', href: `${baseUrl}/` },
+      ],
+      images: [
+        {
+          loc: `${baseUrl}/hero-cellfocus-airpods-pro.jpg`,
+          title: 'CellFocus Original Wireless Earpods Pakistan',
+          caption: 'Wholesale and retail wireless earpods with active noise cancellation in Pakistan.',
+        },
+        {
+          loc: `${baseUrl}/hero-cellfocus-cyber-charger.jpg`,
+          title: 'CellFocus Cyber Fast Charger 65W GaN Pakistan',
+          caption: 'High-speed GaN fast charger with dual type-c power delivery.',
+        },
+        {
+          loc: `${baseUrl}/hero-cellfocus-gan-charger.jpg`,
+          title: 'CellFocus Ultra Fast Power Adapter Pakistan',
+          caption: 'Sasta fast charger price in Pakistan with 24h nationwide dispatch.',
+        },
+      ],
+    });
+
+    // 2. High-Intent Category Views (clean query params with NO # hash fragment)
+    const categoryConfigs = [
+      {
+        slug: 'chargers',
+        title: 'Wholesale Fast Chargers Price in Pakistan | CellFocus',
+        img: `${baseUrl}/hero-cellfocus-cyber-charger.jpg`,
+      },
+      {
+        slug: 'airpods',
+        title: 'Original Earpods Wholesale Price Lahore Karachi | CellFocus',
+        img: `${baseUrl}/hero-cellfocus-airpods-pro.jpg`,
+      },
+      {
+        slug: 'handsfree',
+        title: 'Handsfree Wholesale Rate in Pakistan | CellFocus',
+        img: `${baseUrl}/cellfocus-airpods.png`,
+      },
+      {
+        slug: 'smartwatches',
+        title: 'Best Smart Watch Pakistan Mein | CellFocus Smartwatches',
+        img: `${baseUrl}/hero-cellfocus-pro.jpg`,
+      },
+      {
+        slug: 'powerbanks',
+        title: 'Fast Charging Power Banks Wholesale Pakistan | CellFocus',
+        img: `${baseUrl}/hero-cellfocus-gan-charger.jpg`,
+      },
+    ];
+
+    for (const cat of categoryConfigs) {
+      addEntry({
+        loc: `${baseUrl}/?category=${cat.slug}`,
+        priority: '0.9',
+        changefreq: 'daily',
+        images: [{ loc: cat.img, title: cat.title }],
       });
     }
 
-    xml += `</urlset>`;
+    // 3. Dynamic Products from Database
+    if (Array.isArray(products)) {
+      products.forEach((p) => {
+        const pid = p.id || p._id;
+        if (!pid) return;
+        const slug = createSlug(p.name);
+        const pUrl = `${baseUrl}/?product=${encodeURIComponent(slug)}&id=${encodeURIComponent(pid)}`;
+        const lastMod = p.updatedAt ? new Date(p.updatedAt).toISOString().split('T')[0] : today;
+        const imageUrl = p.image && p.image.startsWith('http') ? p.image : `${baseUrl}/logo.png`;
+
+        addEntry({
+          loc: pUrl,
+          lastmod: lastMod,
+          changefreq: 'weekly',
+          priority: '0.8',
+          images: [
+            {
+              loc: imageUrl,
+              title: `${p.name} - CellFocus Pakistan Wholesale & Retail`,
+              caption: p.description || p.name,
+            },
+          ],
+        });
+      });
+    }
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+${entriesXml}</urlset>`;
 
     res.header('Content-Type', 'application/xml; charset=utf-8');
     res.header('Cache-Control', 'public, max-age=3600');
@@ -161,7 +201,7 @@ router.get('/sitemap.xml', async (req, res) => {
  * Dynamic robots.txt endpoint
  */
 router.get('/robots.txt', (req, res) => {
-  const baseUrl = process.env.SITE_URL || 'https://www.cellfocusaccessories.com';
+  const baseUrl = resolveSiteUrl();
   const robots = `# ==========================================
 # Robots.txt for CellFocus Pakistan
 # Website: ${baseUrl}/
@@ -169,13 +209,6 @@ router.get('/robots.txt', (req, res) => {
 
 User-agent: *
 Allow: /
-Allow: /#products
-Allow: /#bulk
-Allow: /#why-us
-Allow: /#faq
-Allow: /#about-us
-Allow: /#returns
-Allow: /#contact
 Allow: /sitemap.xml
 
 # Block internal admin, private APIs, and cart checkout payloads

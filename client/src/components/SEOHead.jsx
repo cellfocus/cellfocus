@@ -7,7 +7,7 @@ import { useEffect } from 'react';
  */
 export default function SEOHead({ category, product }) {
   useEffect(() => {
-    const BASE_URL = 'https://cellfocus.pk';
+    const BASE_URL = 'https://www.cellfocusaccessories.com';
     const DEFAULT_TITLE = 'Wholesale & Retail Mobile Accessories Pakistan | CellFocus';
     const DEFAULT_DESC =
       'Buy original smartwatches, wireless earpods, fast chargers & handsfree at wholesale & retail rates in Pakistan. Cash on delivery Lahore, Karachi & nationwide.';
@@ -31,7 +31,7 @@ export default function SEOHead({ category, product }) {
 
       title = `${product.name} Price in Pakistan (Wholesale & Retail) | CellFocus`;
       description = `Buy original ${product.name} online in Pakistan. Guaranteed authentic, best wholesale & retail rate, 7-day warranty, and fast cash on delivery nationwide.`;
-      canonical = `${BASE_URL}/?product=${cleanSlug}&id=${pid}#products`;
+      canonical = `${BASE_URL}/?product=${cleanSlug}&id=${pid}`;
       keywords = `${product.name}, ${product.name} price in pakistan, ${product.name} wholesale rate, sasta ${product.name}, original ${product.name} lahore karachi, cellfocus`;
 
       const imageUrl =
@@ -93,7 +93,7 @@ export default function SEOHead({ category, product }) {
                 name: product.category
                   ? product.category.toUpperCase()
                   : 'Accessories',
-                item: `${BASE_URL}/?category=${product.category || 'all'}#products`,
+                item: `${BASE_URL}/?category=${product.category || 'all'}`,
               },
               {
                 '@type': 'ListItem',
@@ -111,21 +111,21 @@ export default function SEOHead({ category, product }) {
         title = 'Fast Chargers & Power Adapters Price in Pakistan | Wholesale & Retail CellFocus';
         description =
           'Buy original GaN fast chargers, 65W dual-port adapters & type-c cables in Pakistan at wholesale & retail prices. Sasta charger price, 24h dispatch & COD.';
-        canonical = `${BASE_URL}/?category=chargers#products`;
+        canonical = `${BASE_URL}/?category=chargers`;
         keywords =
           'sasta charger price, fast charger online shopping pakistan, wholesale charger price in pakistan, gan 65w charger lahore, type c fast charging adapter karachi, mobile charger wholesale supplier pakistan, cellfocus chargers';
       } else if (category === 'airpods') {
         title = 'Original Wireless Earpods & AirPods Price in Pakistan | CellFocus Wholesale';
         description =
           'Buy premium wireless earpods & airpods in Lahore, Karachi, Islamabad with active noise cancellation and heavy bass at wholesale rates. Cash on delivery.';
-        canonical = `${BASE_URL}/?category=airpods#products`;
+        canonical = `${BASE_URL}/?category=airpods`;
         keywords =
           'original earpods wholesale price lahore karachi islamabad, airpods wholesale rate pakistan, sasta wireless earbuds, hall road airpods wholesale, best earbuds in pakistan mein, cellfocus wireless audio';
       } else if (category === 'handsfree') {
         title = 'Original Handsfree & Earphones Price in Pakistan | CellFocus Wholesale Rate';
         description =
           'Premium bass handsfree & in-ear earphones with HD mic across Pakistan. Handsfree wholesale rate for phone retailers and bulk buyers in Shah Alam & Hall Road.';
-        canonical = `${BASE_URL}/?category=handsfree#products`;
+        canonical = `${BASE_URL}/?category=handsfree`;
         keywords =
           'handsfree wholesale rate, original handsfree sasti price, bass handsfree pakistan, mobile accessories ki wholesale market, 3.5mm jack handsfree, type c handsfree pakistan, cellfocus handsfree';
       }

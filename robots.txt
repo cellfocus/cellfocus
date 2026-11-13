@@ -1,17 +1,10 @@
 # ==========================================
 # Robots.txt for CellFocus Pakistan
-# Website: https://cellfocus.pk/
+# Website: https://www.cellfocusaccessories.com/
 # ==========================================
 
 User-agent: *
 Allow: /
-Allow: /#products
-Allow: /#bulk
-Allow: /#why-us
-Allow: /#faq
-Allow: /#about-us
-Allow: /#returns
-Allow: /#contact
 Allow: /sitemap.xml
 
 # Block internal admin, private APIs, and cart checkout payloads
@@ -24,9 +17,8 @@ Disallow: /api/admin/
 Disallow: /api/upload/
 Disallow: /api/orders/track
 
-# Crawl-delay for optimal indexing
+# Crawl-delay for polite indexing
 Crawl-delay: 1
 
 # XML Sitemaps
-Sitemap: https://cellfocus.pk/sitemap.xml
-
+Sitemap: https://www.cellfocusaccessories.com/sitemap.xml

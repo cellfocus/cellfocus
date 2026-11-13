@@ -233,5 +233,18 @@ Sitemap: ${baseUrl}/sitemap.xml
   return res.status(200).send(robots);
 });
 
+/**
+ * Google Search Console HTML Verification Route
+ * Handles /googlefea0ecee8dade37b.html (and any standard Google verification file)
+ */
+router.get('/google:code.html', (req, res, next) => {
+  const code = req.params.code;
+  if (/^[a-f0-9]+$/i.test(code)) {
+    res.header('Content-Type', 'text/html; charset=utf-8');
+    return res.status(200).send(`google-site-verification: google${code}.html\n`);
+  }
+  next();
+});
+
 module.exports = router;
 

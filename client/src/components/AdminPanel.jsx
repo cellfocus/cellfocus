@@ -278,6 +278,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     image3: '',
     image4: '',
     details: '',
+    connectorTypes: [],
   });
 
   // Client-side instant image processing & compression for direct file uploads
@@ -715,6 +716,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
           image3: '',
           image4: '',
           details: '',
+          connectorTypes: [],
         });
         setActiveTab('products');
         fetchProducts();
@@ -748,6 +750,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
       image3: img3,
       image4: img4,
       details: p.details || '',
+      connectorTypes: Array.isArray(p.connectorTypes) ? p.connectorTypes : [],
     });
     setActiveTab('create');
   };
@@ -791,6 +794,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
           image3: '',
           image4: '',
           details: '',
+          connectorTypes: [],
         });
         setActiveTab('products');
         fetchProducts();
@@ -1786,6 +1790,47 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                     </div>
                   )}
                 </div>
+
+                {/* Connector Type Selector — chargers only */}
+                {form.category === 'chargers' && (
+                  <div className="p-3.5 rounded-xl border border-[#dedad0] bg-[#faf8f4]">
+                    <div className="mb-2">
+                      <span className="text-xs font-bold text-[#1c1b18] block">Connector Type Options</span>
+                      <p className="text-[11px] text-[#78746a] mt-0.5">Select which connector types this charger supports. Customers will see these as selectable options on the product card.</p>
+                    </div>
+                    <div className="flex gap-2 flex-wrap">
+                      {['Type-C', 'USB Micro'].map((ct) => {
+                        const isChecked = Array.isArray(form.connectorTypes) && form.connectorTypes.includes(ct);
+                        return (
+                          <button
+                            key={ct}
+                            type="button"
+                            onClick={() => {
+                              const current = Array.isArray(form.connectorTypes) ? form.connectorTypes : [];
+                              const updated = isChecked
+                                ? current.filter((x) => x !== ct)
+                                : [...current, ct];
+                              setForm({ ...form, connectorTypes: updated });
+                            }}
+                            className={`px-4 py-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                              isChecked
+                                ? 'bg-[#1c1b18] text-white border-[#1c1b18]'
+                                : 'bg-white text-[#1c1b18] border-[#dedad0] hover:border-[#1c1b18]/60'
+                            }`}
+                          >
+                            {isChecked && <Check className="w-3 h-3" strokeWidth={3} />}
+                            {ct}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {Array.isArray(form.connectorTypes) && form.connectorTypes.length > 0 && (
+                      <p className="text-[11px] text-emerald-700 mt-2 font-medium">
+                        ✓ Selected: {form.connectorTypes.join(', ')}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* Best Seller of the Month Checkbox Toggle */}
                 <div className="p-3.5 rounded-xl border border-[#dedad0] bg-[#faf8f4] hover:bg-white transition-all">

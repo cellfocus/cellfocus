@@ -44,6 +44,23 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
     }
   }, [validColors]);
 
+  // Connector type (Type-C / Micro USB) — shown for chargers only
+  const isCharger = (product.category || '').toLowerCase() === 'chargers';
+  const validConnectors = React.useMemo(() => {
+    if (!isCharger) return [];
+    return Array.isArray(product.connectorTypes)
+      ? product.connectorTypes.filter((t) => t && typeof t === 'string' && t.trim().length > 0)
+      : [];
+  }, [product.connectorTypes, isCharger]);
+
+  const [selectedConnector, setSelectedConnector] = useState(
+    validConnectors.length > 0 ? validConnectors[0] : null
+  );
+
+  useEffect(() => {
+    setSelectedConnector(validConnectors.length > 0 ? validConnectors[0] : null);
+  }, [validConnectors]);
+
   // Gather all available distinct photos (prioritizing selected color picture)
   const allImages = React.useMemo(() => {
     const list = [];
@@ -106,6 +123,11 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
     setActiveImageIndex(0);
   };
 
+  const handleConnectorClick = (e, connector) => {
+    e.stopPropagation();
+    setSelectedConnector(connector);
+  };
+
   const hasSale = Boolean(product.isOnSale && product.originalPrice && Number(product.originalPrice) > Number(product.price));
   const discountPercent = hasSale ? Math.round(((Number(product.originalPrice) - Number(product.price)) / Number(product.originalPrice)) * 100) : 0;
 
@@ -116,6 +138,7 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
         onSelectProduct({
           ...product,
           selectedColor: selectedColor?.name || (product.colors?.[0]?.name) || null,
+          selectedConnector: selectedConnector || (validConnectors[0]) || null,
           image: selectedColor?.image || product.image,
         })
       }
@@ -250,6 +273,33 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
               </span>
             </div>
           )}
+
+          {/* Connector Type Selector — chargers only (Type-C / USB Micro) */}
+          {validConnectors.length > 0 && (
+            <div className="flex items-center gap-2 mb-2.5 pt-0.5 flex-wrap">
+              <span className="text-[10px] text-[#78746a] font-medium">Type:</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {validConnectors.map((ct, i) => {
+                  const isSelected = selectedConnector === ct || (!selectedConnector && i === 0);
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={(e) => handleConnectorClick(e, ct)}
+                      className={`px-2 py-0.5 text-[10px] font-semibold rounded-sm border transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#1c1b18] text-white border-[#1c1b18]'
+                          : 'bg-white text-[#1c1b18] border-[#d6d2c4] hover:border-[#1c1b18]/60 hover:bg-[#f4f2ea]'
+                      }`}
+                      title={ct}
+                    >
+                      {ct}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         <button
@@ -258,6 +308,7 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
             onAdd({
               ...product,
               selectedColor: selectedColor?.name || (validColors[0]?.name) || null,
+              selectedConnector: selectedConnector || (validConnectors[0]) || null,
               image: selectedColor?.image || product.image,
             });
           }}

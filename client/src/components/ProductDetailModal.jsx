@@ -84,6 +84,7 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
   const [qty, setQty] = useState(1);
   const [addedNotice, setAddedNotice] = useState(false);
   const [selectedColor, setSelectedColor] = useState(null);
+  const [selectedConnector, setSelectedConnector] = useState(null);
 
   const modalRef = useRef(null);
   const contentRef = useRef(null);
@@ -113,7 +114,16 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
       : [];
   }, [product?.colors]);
 
-  // Reset selected image, color and quantity whenever the product changes or opens
+  // Connector types — only relevant for chargers
+  const isCharger = (product?.category || '').toLowerCase() === 'chargers';
+  const validConnectors = React.useMemo(() => {
+    if (!isCharger) return [];
+    return Array.isArray(product?.connectorTypes)
+      ? product.connectorTypes.filter((t) => t && typeof t === 'string' && t.trim().length > 0)
+      : [];
+  }, [product?.connectorTypes, isCharger]);
+
+  // Reset selected image, color, connector and quantity whenever the product changes or opens
   useEffect(() => {
     if (product) {
       setActiveImageIndex(0);
@@ -127,8 +137,16 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
       } else {
         setSelectedColor(null);
       }
+      if (validConnectors.length > 0) {
+        const found = product.selectedConnector
+          ? validConnectors.find((t) => t === product.selectedConnector)
+          : null;
+        setSelectedConnector(found || validConnectors[0]);
+      } else {
+        setSelectedConnector(null);
+      }
     }
-  }, [product, isOpen, validColors]);
+  }, [product, isOpen, validColors, validConnectors]);
 
   // Lock body scroll when modal is open
   useEffect(() => {
@@ -220,6 +238,7 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
         {
           ...product,
           selectedColor: selectedColor?.name || (product.colors?.[0]?.name) || null,
+          selectedConnector: selectedConnector || (validConnectors[0]) || null,
           image: selectedColor?.image || product.image,
         },
         qty
@@ -233,6 +252,7 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
     const itemToBuy = {
       ...product,
       selectedColor: selectedColor?.name || (product.colors?.[0]?.name) || null,
+      selectedConnector: selectedConnector || (validConnectors[0]) || null,
       image: selectedColor?.image || product.image,
     };
     if (onBuyNow) {
@@ -478,6 +498,41 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
                             )}
                           </span>
                           <span className="text-xs font-semibold">{c.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Connector Type Selector — chargers only */}
+              {validConnectors.length > 0 && (
+                <div className="space-y-2 py-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-[#1c1b18]">
+                      Connector: <span className="font-bold normal-case text-teal-800">{selectedConnector || validConnectors[0]}</span>
+                    </span>
+                    <span className="text-[11px] text-[#78746a]">
+                      {validConnectors.length} {validConnectors.length === 1 ? 'type' : 'types'} available
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {validConnectors.map((ct, i) => {
+                      const isSelected = selectedConnector === ct || (!selectedConnector && i === 0);
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => setSelectedConnector(ct)}
+                          className={`px-4 py-2 rounded-xl border transition-all cursor-pointer flex items-center gap-2 ${
+                            isSelected
+                              ? 'border-[#1c1b18] bg-[#1c1b18] text-white shadow-xs scale-[1.02]'
+                              : 'border-[#dedad0] bg-white text-[#1c1b18] hover:border-[#1c1b18]/60 hover:bg-[#faf8f4]'
+                          }`}
+                          title={ct}
+                        >
+                          <span className="text-xs font-bold tracking-wide">{ct}</span>
+                          {isSelected && <Check className="w-3 h-3" strokeWidth={3} />}
                         </button>
                       );
                     })}

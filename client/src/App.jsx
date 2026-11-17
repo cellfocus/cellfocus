@@ -261,8 +261,11 @@ function App() {
       ? product.colors.find((c) => c && typeof c.name === 'string' && c.name.trim())
       : null;
     const resolvedColor = product.selectedColor || defaultColorObj?.name || null;
+    const resolvedConnector = product.selectedConnector || (Array.isArray(product.connectorTypes) && product.connectorTypes[0]) || null;
     const resolvedImage = product.image || defaultColorObj?.image || '';
-    const cartKey = resolvedColor ? `${pid}::${resolvedColor}` : String(pid);
+    
+    // Distinguish cart items by product ID + color + connector
+    const cartKey = `${pid}${resolvedColor ? `::col-${resolvedColor}` : ''}${resolvedConnector ? `::conn-${resolvedConnector}` : ''}`;
 
     setCartItems((prev) => {
       const existing = prev.find((item) => (item.cartKey || item.id) === cartKey);
@@ -277,9 +280,11 @@ function App() {
           id: pid,
           cartKey,
           name: product.name,
+          category: product.category,
           price: Number(product.price),
           image: resolvedImage,
           selectedColor: resolvedColor,
+          selectedConnector: resolvedConnector,
           qty,
         },
       ];

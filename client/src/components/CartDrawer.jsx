@@ -46,7 +46,11 @@ export default function CartDrawer({
   const getWhatsAppOrderUrl = (order) => {
     if (!order) return '';
     const itemsText = (order.items || [])
-      .map((it) => `• ${it.name}${it.selectedColor ? ` [Color: ${it.selectedColor}]` : ''} (Qty: ${it.qty}) - Rs. ${(it.price * it.qty).toLocaleString()}`)
+      .map((it) => {
+        const col = it.selectedColor ? ` [Color: ${it.selectedColor}]` : '';
+        const conn = it.selectedConnector ? ` [Type: ${it.selectedConnector}]` : '';
+        return `• ${it.name}${col}${conn} (Qty: ${it.qty}) - Rs. ${(it.price * it.qty).toLocaleString()}`;
+      })
       .join('\n');
     const msg = `Assalam-o-Alaikum CellFocus! 📦✨\n\nI just placed an order on your website:\n\n*Order ID:* #${order.orderId}\n*Customer:* ${order.customer?.name || customer.name}\n*Phone:* ${order.customer?.phone || customer.phone}\n*Address:* ${order.customer?.address || customer.address}, ${order.customer?.city || customer.city}\n\n*Items Ordered:*\n${itemsText}\n\n*Total Amount:* Rs. ${Number(order.total).toLocaleString()} PKR\n\nPlease confirm my order and share delivery updates. Thank you!`;
     return `https://wa.me/923269589597?text=${encodeURIComponent(msg)}`;
@@ -70,6 +74,7 @@ export default function CartDrawer({
       const normalizedItems = cartItems.map((item) => ({
         ...item,
         selectedColor: item.selectedColor || item.color || null,
+        selectedConnector: item.selectedConnector || item.connector || null,
       }));
       const res = await fetch(API_ORDERS, {
         method: 'POST',
@@ -177,7 +182,8 @@ export default function CartDrawer({
                         <div key={idx} className="flex items-center justify-between gap-2 text-[11px] text-[#4a473f]">
                           <span className="truncate">
                             {it.name}
-                            {it.selectedColor ? ` (${it.selectedColor})` : ''} ×{it.qty}
+                            {it.selectedColor ? ` (${it.selectedColor})` : ''}
+                            {it.selectedConnector ? ` [${it.selectedConnector}]` : ''} ×{it.qty}
                           </span>
                           <span className="font-mono shrink-0">{formatPrice(it.price * it.qty)}</span>
                         </div>
@@ -319,6 +325,11 @@ export default function CartDrawer({
                               {it.selectedColor}
                             </span>
                           )}
+                          {it.selectedConnector && (
+                            <span className="ml-1 inline-block px-1.5 py-0.2 rounded bg-blue-50 text-blue-800 border border-blue-200 text-[10px] font-semibold">
+                              {it.selectedConnector}
+                            </span>
+                          )}
                           <span className="text-[#78746a] ml-1 font-mono">x{it.qty}</span>
                         </span>
                         <span className="font-mono shrink-0">{formatPrice(it.price * it.qty)}</span>
@@ -380,12 +391,20 @@ export default function CartDrawer({
 
                       <div className="flex-1 min-w-0">
                         <h4 className="text-xs font-semibold text-[#1c1b18] truncate">{item.name}</h4>
-                        {item.selectedColor && (
-                          <span className="inline-flex items-center gap-1 text-[10px] text-teal-800 bg-teal-50 border border-teal-200 px-1.5 py-0.2 rounded font-medium mt-0.5">
-                            <span>Color:</span>
-                            <strong>{item.selectedColor}</strong>
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                          {item.selectedColor && (
+                            <span className="inline-flex items-center gap-1 text-[10px] text-teal-800 bg-teal-50 border border-teal-200 px-1.5 py-0.2 rounded font-medium">
+                              <span>Color:</span>
+                              <strong>{item.selectedColor}</strong>
+                            </span>
+                          )}
+                          {item.selectedConnector && (
+                            <span className="inline-flex items-center gap-1 text-[10px] text-blue-800 bg-blue-50 border border-blue-200 px-1.5 py-0.2 rounded font-medium">
+                              <span>Type:</span>
+                              <strong>{item.selectedConnector}</strong>
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs font-mono text-[#78746a] mt-0.5">{formatPrice(item.price)}</p>
 
                         <div className="flex items-center gap-2 mt-2">

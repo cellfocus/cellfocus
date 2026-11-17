@@ -33,6 +33,7 @@ dist/
 
 # Scratch and temporary
 scratch/
+server/data/*backup*.json
 
 .vscode/
 .idea/

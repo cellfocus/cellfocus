@@ -30,7 +30,7 @@ router.get('/:id', async (req, res) => {
 // POST create product (Admin Protected)
 router.post('/', requireAdminAuth, async (req, res) => {
   try {
-    const { name, category, price, image, image2, image3, image4, images, details, stock, isBestSeller, isHotDeal, isOnSale, originalPrice, specs, displayOrder, categoryOrder, colors } = req.body;
+    const { name, category, price, image, image2, image3, image4, images, details, stock, isBestSeller, isHotDeal, isOnSale, originalPrice, specs, displayOrder, categoryOrder, colors, connectorTypes, subCategory } = req.body;
     if (!name || price === undefined) {
       return res.status(400).json({ success: false, message: 'Name and price are required' });
     }
@@ -53,6 +53,8 @@ router.post('/', requireAdminAuth, async (req, res) => {
       displayOrder: displayOrder !== undefined ? Number(displayOrder) : undefined,
       categoryOrder: categoryOrder !== undefined ? Number(categoryOrder) : undefined,
       colors: Array.isArray(colors) ? colors : [],
+      connectorTypes: Array.isArray(connectorTypes) ? connectorTypes : [],
+      subCategory: subCategory || '',
     });
     res.status(201).json({ success: true, message: 'Product created successfully', data: newProduct });
   } catch (error) {

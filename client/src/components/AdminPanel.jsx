@@ -40,7 +40,8 @@ const buildOrderWaUrl = (ord) => {
   const itemsText = (ord?.items || [])
     .map((it) => {
       const col = it.selectedColor || it.color;
-      return `• ${it.name}${col ? ` [Color: ${col}]` : ''} (Qty: ${it.qty})`;
+      const conn = it.selectedConnector || it.connector;
+      return `• ${it.name}${col ? ` [Color: ${col}]` : ''}${conn ? ` [Type: ${conn}]` : ''} (Qty: ${it.qty})`;
     })
     .join('\n');
   const msg = st === 'Dispatched'
@@ -266,6 +267,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
   const [form, setForm] = useState({
     name: '',
     category: 'chargers',
+    subCategory: '',
     price: '',
     originalPrice: '',
     isOnSale: false,
@@ -279,6 +281,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     image4: '',
     details: '',
     connectorTypes: [],
+    colors: [],
   });
 
   // Client-side instant image processing & compression for direct file uploads
@@ -315,6 +318,47 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
         }));
         const slotNum = key === 'image' ? '1' : key === 'image2' ? '2' : key === 'image3' ? '3' : '4';
         showToast(`Photo ${slotNum} loaded successfully!`);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const processColorImageUpload = (file, index) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('Please select a valid image file (PNG, JPG, WebP)', 'error');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 1200;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
+        setForm((prev) => {
+          const next = Array.isArray(prev.colors) ? [...prev.colors] : [];
+          if (next[index]) {
+            next[index] = { ...next[index], image: optimizedDataUrl };
+          }
+          return { ...prev, colors: next };
+        });
+        showToast('Color variant photo loaded successfully!');
       };
       img.src = e.target.result;
     };
@@ -692,6 +736,11 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
         isBestSeller: Boolean(form.isBestSeller),
         isHotDeal: Boolean(form.isHotDeal),
         images: [form.image, form.image2, form.image3, form.image4].filter(Boolean),
+        colors: Array.isArray(form.colors)
+          ? form.colors.filter((c) => c && typeof c.name === 'string' && c.name.trim().length > 0)
+          : [],
+        connectorTypes: Array.isArray(form.connectorTypes) ? form.connectorTypes : [],
+        subCategory: form.subCategory || '',
       };
       const res = await fetch(API_PRODUCTS, {
         method: 'POST',
@@ -704,6 +753,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
         setForm({
           name: '',
           category: 'chargers',
+          subCategory: '',
           price: '',
           originalPrice: '',
           isOnSale: false,
@@ -717,6 +767,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
           image4: '',
           details: '',
           connectorTypes: [],
+          colors: [],
         });
         setActiveTab('products');
         fetchProducts();
@@ -738,6 +789,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     setForm({
       name: p.name,
       category: p.category,
+      subCategory: p.subCategory || '',
       price: p.price,
       originalPrice: p.originalPrice || '',
       isOnSale: Boolean(p.isOnSale),
@@ -751,6 +803,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
       image4: img4,
       details: p.details || '',
       connectorTypes: Array.isArray(p.connectorTypes) ? p.connectorTypes : [],
+      colors: Array.isArray(p.colors) ? p.colors : [],
     });
     setActiveTab('create');
   };
@@ -769,6 +822,11 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
         isBestSeller: Boolean(form.isBestSeller),
         isHotDeal: Boolean(form.isHotDeal),
         images: [form.image, form.image2, form.image3, form.image4].filter(Boolean),
+        colors: Array.isArray(form.colors)
+          ? form.colors.filter((c) => c && typeof c.name === 'string' && c.name.trim().length > 0)
+          : [],
+        connectorTypes: Array.isArray(form.connectorTypes) ? form.connectorTypes : [],
+        subCategory: form.subCategory || '',
       };
       const res = await fetch(`${API_PRODUCTS}/${editingId}`, {
         method: 'PUT',
@@ -782,6 +840,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
         setForm({
           name: '',
           category: 'chargers',
+          subCategory: '',
           price: '',
           originalPrice: '',
           isOnSale: false,
@@ -795,6 +854,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
           image4: '',
           details: '',
           connectorTypes: [],
+          colors: [],
         });
         setActiveTab('products');
         fetchProducts();
@@ -1508,6 +1568,7 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                         <div className="space-y-1.5 pt-1">
                           {ord.items.map((item, idx) => {
                             const itemColor = item.selectedColor || item.color;
+                            const itemConnector = item.selectedConnector || item.connector;
                             return (
                               <div key={idx} className="flex items-center justify-between text-xs py-1 gap-2">
                                 <div className="flex items-center gap-2 min-w-0 flex-wrap">
@@ -1522,6 +1583,11 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                                   {itemColor && (
                                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200 shrink-0">
                                       Color: {itemColor}
+                                    </span>
+                                  )}
+                                  {itemConnector && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200 shrink-0">
+                                      Type: {itemConnector}
                                     </span>
                                   )}
                                   <span className="text-[#78746a] font-mono text-[11px] shrink-0">x{item.qty}</span>
@@ -1594,6 +1660,26 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                           <span className="text-[10px] font-bold uppercase tracking-wider text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded">
                             {p.category}
                           </span>
+                          {Array.isArray(p.connectorTypes) && p.connectorTypes.length > 0 && (
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
+                              {p.connectorTypes.join(' • ')}
+                            </span>
+                          )}
+                          {Array.isArray(p.colors) && p.colors.length > 0 && (
+                            <span className="inline-flex items-center gap-1 text-[10px] bg-neutral-100 border border-neutral-300 px-1.5 py-0.5 rounded text-[#1c1b18]">
+                              <span className="flex items-center -space-x-1">
+                                {p.colors.slice(0, 3).map((col, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="w-2.5 h-2.5 rounded-full border border-white shadow-2xs"
+                                    style={{ backgroundColor: col.hex || '#000000' }}
+                                    title={col.name}
+                                  />
+                                ))}
+                              </span>
+                              <span>{p.colors.length} {p.colors.length === 1 ? 'color' : 'colors'}</span>
+                            </span>
+                          )}
                           <span className="text-xs text-[#78746a] font-mono">Stock: {p.stock || 20}</span>
                           <button
                             type="button"
@@ -1791,12 +1877,12 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                   )}
                 </div>
 
-                {/* Connector Type Selector — chargers only */}
+                {/* Connector Type / Subcategory Selector — chargers only */}
                 {form.category === 'chargers' && (
                   <div className="p-3.5 rounded-xl border border-[#dedad0] bg-[#faf8f4]">
                     <div className="mb-2">
-                      <span className="text-xs font-bold text-[#1c1b18] block">Connector Type Options</span>
-                      <p className="text-[11px] text-[#78746a] mt-0.5">Select which connector types this charger supports. Customers will see these as selectable options on the product card.</p>
+                      <span className="text-xs font-bold text-[#1c1b18] block">Charger Category &amp; Connector Options</span>
+                      <p className="text-[11px] text-[#78746a] mt-0.5">Select Type-C and/or USB Micro. Customers will see these as category filters on the shop page and as selectable options on the product card.</p>
                     </div>
                     <div className="flex gap-2 flex-wrap">
                       {['Type-C', 'USB Micro'].map((ct) => {
@@ -1810,7 +1896,12 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                               const updated = isChecked
                                 ? current.filter((x) => x !== ct)
                                 : [...current, ct];
-                              setForm({ ...form, connectorTypes: updated });
+                              const updatedSub = updated.includes('Type-C') && !updated.includes('USB Micro')
+                                ? 'type-c'
+                                : updated.includes('USB Micro') && !updated.includes('Type-C')
+                                ? 'usb-micro'
+                                : '';
+                              setForm({ ...form, connectorTypes: updated, subCategory: updatedSub });
                             }}
                             className={`px-4 py-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
                               isChecked
@@ -1831,6 +1922,167 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                     )}
                   </div>
                 )}
+
+                {/* Color Variants Manager — available for ANY category */}
+                <div className="p-3.5 rounded-xl border border-[#dedad0] bg-[#faf8f4] space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <span className="text-xs font-bold text-[#1c1b18] block">Color Variants (Optional)</span>
+                      <p className="text-[11px] text-[#78746a] mt-0.5">
+                        Add color choices for this product. Customers can click color swatches on the store card &amp; detail modal.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const current = Array.isArray(form.colors) ? form.colors : [];
+                        setForm({
+                          ...form,
+                          colors: [
+                            ...current,
+                            { name: '', hex: '#1c1b18', image: '' }
+                          ]
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-[#1c1b18] text-white text-xs font-semibold hover:bg-[#32302b] transition cursor-pointer flex items-center gap-1 shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Color</span>
+                    </button>
+                  </div>
+
+                  {/* Preset Quick-Add Color Pills */}
+                  <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                    <span className="text-[10px] text-[#78746a] font-medium">Quick Presets:</span>
+                    {[
+                      { name: 'Black', hex: '#1c1b18' },
+                      { name: 'White', hex: '#FFFFFF' },
+                      { name: 'Silver', hex: '#D1D5DB' },
+                      { name: 'Space Grey', hex: '#4B5563' },
+                      { name: 'Metallic Gold', hex: '#F0BD33' },
+                      { name: 'Rose Gold', hex: '#FBE4E6' },
+                      { name: 'Navy Blue', hex: '#1E3A8A' },
+                      { name: 'Red', hex: '#DC2626' },
+                    ].map((preset) => (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        onClick={() => {
+                          const current = Array.isArray(form.colors) ? form.colors : [];
+                          if (current.some((c) => (c.name || '').toLowerCase() === preset.name.toLowerCase())) {
+                            return;
+                          }
+                          setForm({
+                            ...form,
+                            colors: [...current, { name: preset.name, hex: preset.hex, image: '' }]
+                          });
+                        }}
+                        className="px-2 py-0.5 text-[10px] rounded-md border border-[#d6d2c4] bg-white hover:bg-[#eeebe2] text-[#1c1b18] flex items-center gap-1 cursor-pointer transition"
+                      >
+                        <span className="w-2.5 h-2.5 rounded-full border border-black/20" style={{ backgroundColor: preset.hex }} />
+                        <span>+ {preset.name}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* List of Configured Colors */}
+                  {Array.isArray(form.colors) && form.colors.length > 0 ? (
+                    <div className="space-y-2.5 pt-2">
+                      {form.colors.map((colorItem, cIdx) => (
+                        <div
+                          key={cIdx}
+                          className="p-3 rounded-xl border border-[#e5e2d6] bg-white flex flex-col sm:flex-row items-start sm:items-center gap-2.5 shadow-2xs"
+                        >
+                          {/* Color Swatch & Color Picker */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <input
+                              type="color"
+                              value={colorItem.hex || '#000000'}
+                              onChange={(e) => {
+                                const next = [...form.colors];
+                                next[cIdx] = { ...next[cIdx], hex: e.target.value };
+                                setForm({ ...form, colors: next });
+                              }}
+                              className="w-8 h-8 rounded-lg cursor-pointer border border-[#dedad0] p-0.5 bg-white"
+                              title="Click to choose color"
+                            />
+                            <input
+                              type="text"
+                              value={colorItem.hex || ''}
+                              onChange={(e) => {
+                                const next = [...form.colors];
+                                next[cIdx] = { ...next[cIdx], hex: e.target.value };
+                                setForm({ ...form, colors: next });
+                              }}
+                              placeholder="#HEX"
+                              className="w-20 text-xs p-1.5 rounded-lg border border-[#dedad0] font-mono uppercase"
+                            />
+                          </div>
+
+                          {/* Color Name */}
+                          <div className="flex-1 w-full sm:w-auto">
+                            <input
+                              type="text"
+                              value={colorItem.name || ''}
+                              onChange={(e) => {
+                                const next = [...form.colors];
+                                next[cIdx] = { ...next[cIdx], name: e.target.value };
+                                setForm({ ...form, colors: next });
+                              }}
+                              placeholder="Color name (e.g. Silver, Rose Gold)"
+                              className="w-full text-xs p-1.5 rounded-lg border border-[#dedad0] bg-white text-[#1c1b18] placeholder:text-[#a09c91]"
+                            />
+                          </div>
+
+                          {/* Color Photo (URL or direct file upload) */}
+                          <div className="flex-1 w-full sm:w-auto flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              value={colorItem.image || ''}
+                              onChange={(e) => {
+                                const next = [...form.colors];
+                                next[cIdx] = { ...next[cIdx], image: e.target.value };
+                                setForm({ ...form, colors: next });
+                              }}
+                              placeholder="Photo URL (optional)"
+                              className="w-full text-xs p-1.5 rounded-lg border border-[#dedad0] bg-white text-[#1c1b18] placeholder:text-[#a09c91]"
+                            />
+                            <label className="p-1.5 rounded-lg border border-[#dedad0] bg-[#faf8f4] hover:bg-white text-[#1c1b18] cursor-pointer shrink-0 transition" title="Upload photo for this color">
+                              <UploadCloud className="w-4 h-4 text-[#78746a]" />
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  if (e.target.files && e.target.files[0]) {
+                                    processColorImageUpload(e.target.files[0], cIdx);
+                                  }
+                                }}
+                                className="hidden"
+                              />
+                            </label>
+                          </div>
+
+                          {/* Remove button */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = form.colors.filter((_, idx) => idx !== cIdx);
+                              setForm({ ...form, colors: next });
+                            }}
+                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer shrink-0"
+                            title="Remove color"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-[#78746a] italic">
+                      No color variants added yet. Click &quot;Add Color&quot; or a quick preset above if this item comes in different colors.
+                    </p>
+                  )}
+                </div>
 
                 {/* Best Seller of the Month Checkbox Toggle */}
                 <div className="p-3.5 rounded-xl border border-[#dedad0] bg-[#faf8f4] hover:bg-white transition-all">

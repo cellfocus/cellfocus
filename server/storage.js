@@ -58,8 +58,49 @@ class StorageEngine {
 
   // --- PRODUCTS ---
   async getAllProducts(category = null) {
+    const isTypeCQuery = category && ['type-c', 'typec', 'usb-c'].includes(category.toLowerCase());
+    const isMicroQuery = category && ['usb-micro', 'micro', 'micro-usb', 'microusb'].includes(category.toLowerCase());
+
+    const matchesChargerSubtype = (p, target) => {
+      const isChg = (p.category || '').toLowerCase() === 'chargers' || (p.category || '').toLowerCase() === target;
+      if (!isChg) return false;
+      const sub = (p.subCategory || '').toLowerCase();
+      const conns = Array.isArray(p.connectorTypes) ? p.connectorTypes.map((c) => String(c).toLowerCase()) : [];
+      const text = `${p.name || ''} ${p.details || ''} ${p.specs || ''}`.toLowerCase();
+      if (target === 'type-c') {
+        return sub === 'type-c' || conns.includes('type-c') || text.includes('type-c') || text.includes('usb-c') || text.includes(' pd');
+      }
+      if (target === 'usb-micro') {
+        return sub === 'usb-micro' || conns.includes('usb micro') || conns.includes('micro usb') || text.includes('micro');
+      }
+      return false;
+    };
+
     if (this.useMongo) {
-      const query = category && category !== 'all' ? { category } : {};
+      let query = {};
+      if (category && category !== 'all') {
+        if (isTypeCQuery) {
+          query = {
+            $or: [
+              { category: 'type-c' },
+              { subCategory: 'type-c' },
+              { connectorTypes: 'Type-C' },
+              { category: 'chargers', name: { $regex: /type-c|usb-c/i } },
+            ],
+          };
+        } else if (isMicroQuery) {
+          query = {
+            $or: [
+              { category: 'usb-micro' },
+              { subCategory: 'usb-micro' },
+              { connectorTypes: 'USB Micro' },
+              { category: 'chargers', name: { $regex: /micro/i } },
+            ],
+          };
+        } else {
+          query = { category };
+        }
+      }
       const sortRule = category && category !== 'all'
         ? { categoryOrder: 1, displayOrder: 1, createdAt: -1 }
         : { displayOrder: 1, categoryOrder: 1, createdAt: -1 };
@@ -67,14 +108,20 @@ class StorageEngine {
     }
     const products = readJson(PRODUCTS_FILE, initialProducts);
     if (category && category !== 'all') {
-      return products
-        .filter((p) => p.category.toLowerCase() === category.toLowerCase())
-        .sort((a, b) => {
-          const ordA = a.categoryOrder !== undefined ? Number(a.categoryOrder) : (a.displayOrder !== undefined ? Number(a.displayOrder) : 999);
-          const ordB = b.categoryOrder !== undefined ? Number(b.categoryOrder) : (b.displayOrder !== undefined ? Number(b.displayOrder) : 999);
-          if (ordA !== ordB) return ordA - ordB;
-          return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
-        });
+      let filtered = [];
+      if (isTypeCQuery) {
+        filtered = products.filter((p) => matchesChargerSubtype(p, 'type-c'));
+      } else if (isMicroQuery) {
+        filtered = products.filter((p) => matchesChargerSubtype(p, 'usb-micro'));
+      } else {
+        filtered = products.filter((p) => (p.category || '').toLowerCase() === category.toLowerCase());
+      }
+      return filtered.sort((a, b) => {
+        const ordA = a.categoryOrder !== undefined ? Number(a.categoryOrder) : (a.displayOrder !== undefined ? Number(a.displayOrder) : 999);
+        const ordB = b.categoryOrder !== undefined ? Number(b.categoryOrder) : (b.displayOrder !== undefined ? Number(b.displayOrder) : 999);
+        if (ordA !== ordB) return ordA - ordB;
+        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      });
     }
     return [...products].sort((a, b) => {
       const ordA = a.displayOrder !== undefined ? Number(a.displayOrder) : 999;
@@ -127,6 +174,8 @@ class StorageEngine {
       isHotDeal: Boolean(data.isHotDeal),
       displayOrder: Number(data.displayOrder) > 0 ? Number(data.displayOrder) : (products.length + 1),
       categoryOrder: Number(data.categoryOrder) > 0 ? Number(data.categoryOrder) : 1,
+      subCategory: data.subCategory || '',
+      connectorTypes: Array.isArray(data.connectorTypes) ? data.connectorTypes : [],
       colors: Array.isArray(data.colors) ? data.colors.filter((c) => c && typeof c.name === 'string' && c.name.trim().length > 0) : [],
       createdAt: new Date().toISOString()
     };

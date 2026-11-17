@@ -75,6 +75,14 @@ const productSchema = new mongoose.Schema(
       type: Number,
       default: 1,
     },
+    subCategory: {
+      type: String,
+      default: '',
+    },
+    connectorTypes: {
+      type: [String],
+      default: [],
+    },
     colors: [
       {
         name: { type: String, default: '' },

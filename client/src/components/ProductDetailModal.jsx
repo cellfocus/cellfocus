@@ -8,7 +8,9 @@ import {
   ArrowLeft,
   Check,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Cable,
+  Usb
 } from 'lucide-react';
 import gsap from 'gsap';
 import { useCurrency } from '../context/CurrencyContext';
@@ -116,12 +118,24 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
 
   // Connector types — only relevant for chargers
   const isCharger = (product?.category || '').toLowerCase() === 'chargers';
+  const inferredChargerType = React.useMemo(() => {
+    if (!isCharger || !product) return null;
+    const sub = (product.subCategory || '').toLowerCase();
+    if (sub === 'type-c') return 'Type-C';
+    if (sub === 'usb-micro') return 'USB Micro';
+    const text = `${product.name || ''} ${product.details || ''} ${product.specs || ''}`.toLowerCase();
+    if (text.includes('type-c') || text.includes('usb-c') || text.includes(' pd')) return 'Type-C';
+    if (text.includes('micro') || text.includes('v8')) return 'USB Micro';
+    return null;
+  }, [product, isCharger]);
+
   const validConnectors = React.useMemo(() => {
     if (!isCharger) return [];
-    return Array.isArray(product?.connectorTypes)
-      ? product.connectorTypes.filter((t) => t && typeof t === 'string' && t.trim().length > 0)
-      : [];
-  }, [product?.connectorTypes, isCharger]);
+    if (Array.isArray(product?.connectorTypes) && product.connectorTypes.length > 0) {
+      return product.connectorTypes.filter((t) => t && typeof t === 'string' && t.trim().length > 0);
+    }
+    return inferredChargerType ? [inferredChargerType] : [];
+  }, [product?.connectorTypes, isCharger, inferredChargerType]);
 
   // Reset selected image, color, connector and quantity whenever the product changes or opens
   useEffect(() => {
@@ -238,7 +252,7 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
         {
           ...product,
           selectedColor: selectedColor?.name || (product.colors?.[0]?.name) || null,
-          selectedConnector: selectedConnector || (validConnectors[0]) || null,
+          selectedConnector: selectedConnector || (validConnectors[0]) || inferredChargerType || null,
           image: selectedColor?.image || product.image,
         },
         qty
@@ -252,7 +266,7 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
     const itemToBuy = {
       ...product,
       selectedColor: selectedColor?.name || (product.colors?.[0]?.name) || null,
-      selectedConnector: selectedConnector || (validConnectors[0]) || null,
+      selectedConnector: selectedConnector || (validConnectors[0]) || inferredChargerType || null,
       image: selectedColor?.image || product.image,
     };
     if (onBuyNow) {
@@ -505,7 +519,7 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
                 </div>
               )}
 
-              {/* Connector Type Selector — chargers only */}
+              {/* Connector Type Selector — chargers & pin products (Type-C / USB Micro / Both) */}
               {validConnectors.length > 0 && (
                 <div className="space-y-2 py-1">
                   <div className="flex items-center justify-between">

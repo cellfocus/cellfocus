@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Check, Loader2, LayoutGrid, Zap, AudioLines, Headphones, Flame } from 'lucide-react';
+import { Plus, Check, Loader2, LayoutGrid, Zap, AudioLines, Headphones, Flame, Cable, Usb } from 'lucide-react';
 import gsap from 'gsap';
 import { useCurrency } from '../context/CurrencyContext';
 import HotDealSection from './HotDealSection';
@@ -14,6 +14,26 @@ import defaultProducts from '../data/defaultProducts.json';
 import { ENDPOINTS } from '../config/api';
 
 const API_BASE = ENDPOINTS.PRODUCTS;
+
+export const isTypeCCharger = (p) => {
+  const cat = (p.category || '').toLowerCase();
+  const isChg = cat === 'chargers' || cat === 'type-c' || cat === 'usb-c';
+  if (!isChg) return false;
+  if ((p.subCategory || '').toLowerCase() === 'type-c') return true;
+  if (Array.isArray(p.connectorTypes) && p.connectorTypes.some((ct) => /type-?c|usb-?c/i.test(ct))) return true;
+  const text = `${p.name || ''} ${p.details || ''} ${p.specs || ''}`.toLowerCase();
+  return text.includes('type-c') || text.includes('usb-c') || text.includes(' pd');
+};
+
+export const isUsbMicroCharger = (p) => {
+  const cat = (p.category || '').toLowerCase();
+  const isChg = cat === 'chargers' || cat === 'usb-micro' || cat === 'micro';
+  if (!isChg) return false;
+  if ((p.subCategory || '').toLowerCase() === 'usb-micro') return true;
+  if (Array.isArray(p.connectorTypes) && p.connectorTypes.some((ct) => /micro/i.test(ct))) return true;
+  const text = `${p.name || ''} ${p.details || ''} ${p.specs || ''}`.toLowerCase();
+  return text.includes('micro') || text.includes('v8');
+};
 
 const CATEGORIES = [
   { id: 'all', label: 'All', icon: LayoutGrid },
@@ -46,12 +66,20 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
 
   // Connector type (Type-C / Micro USB) — shown for chargers only
   const isCharger = (product.category || '').toLowerCase() === 'chargers';
+  const primaryChargerType = React.useMemo(() => {
+    if (!isCharger) return null;
+    if (isTypeCCharger(product)) return 'Type-C';
+    if (isUsbMicroCharger(product)) return 'USB Micro';
+    return null;
+  }, [product, isCharger]);
+
   const validConnectors = React.useMemo(() => {
     if (!isCharger) return [];
-    return Array.isArray(product.connectorTypes)
-      ? product.connectorTypes.filter((t) => t && typeof t === 'string' && t.trim().length > 0)
-      : [];
-  }, [product.connectorTypes, isCharger]);
+    if (Array.isArray(product.connectorTypes) && product.connectorTypes.length > 0) {
+      return product.connectorTypes.filter((t) => t && typeof t === 'string' && t.trim().length > 0);
+    }
+    return primaryChargerType ? [primaryChargerType] : [];
+  }, [product.connectorTypes, isCharger, primaryChargerType]);
 
   const [selectedConnector, setSelectedConnector] = useState(
     validConnectors.length > 0 ? validConnectors[0] : null
@@ -138,7 +166,7 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
         onSelectProduct({
           ...product,
           selectedColor: selectedColor?.name || (product.colors?.[0]?.name) || null,
-          selectedConnector: selectedConnector || (validConnectors[0]) || null,
+          selectedConnector: selectedConnector || (validConnectors[0]) || primaryChargerType || null,
           image: selectedColor?.image || product.image,
         })
       }
@@ -274,7 +302,7 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
             </div>
           )}
 
-          {/* Connector Type Selector — chargers only (Type-C / USB Micro) */}
+          {/* Connector Type Selector — chargers & pin products (Type-C / USB Micro / Both) */}
           {validConnectors.length > 0 && (
             <div className="flex items-center gap-2 mb-2.5 pt-0.5 flex-wrap">
               <span className="text-[10px] text-[#78746a] font-medium">Type:</span>
@@ -308,7 +336,7 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
             onAdd({
               ...product,
               selectedColor: selectedColor?.name || (validColors[0]?.name) || null,
-              selectedConnector: selectedConnector || (validConnectors[0]) || null,
+              selectedConnector: selectedConnector || (validConnectors[0]) || primaryChargerType || null,
               image: selectedColor?.image || product.image,
             });
           }}
@@ -338,6 +366,7 @@ export default function ProductGrid({ activeCategory, onAddToCart, refreshTrigge
   const [products, setProducts] = useState(defaultProducts || []);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState(activeCategory || 'all');
+  const [chargerSubFilter, setChargerSubFilter] = useState('all'); // 'all' | 'type-c' | 'usb-micro'
   const [addedId, setAddedId] = useState(null);
 
   const shopSectionRef = useRef(null);
@@ -369,28 +398,65 @@ export default function ProductGrid({ activeCategory, onAddToCart, refreshTrigge
 
   useEffect(() => {
     if (activeCategory) {
-      setFilter(activeCategory);
+      const lower = String(activeCategory).toLowerCase();
+      if (lower === 'type-c' || lower === 'typec' || lower === 'usb-c') {
+        setFilter('chargers');
+        setChargerSubFilter('type-c');
+      } else if (lower === 'usb-micro' || lower === 'micro' || lower === 'micro-usb') {
+        setFilter('chargers');
+        setChargerSubFilter('usb-micro');
+      } else {
+        setFilter(activeCategory);
+        if (activeCategory === 'chargers') {
+          setChargerSubFilter('all');
+        }
+      }
     }
   }, [activeCategory]);
 
   const displayedProducts = React.useMemo(() => {
+    let list = [...products];
+
     if (filter === 'all') {
-      return [...products].sort((a, b) => {
+      return list.sort((a, b) => {
         const ordA = a.displayOrder !== undefined ? Number(a.displayOrder) : 999;
         const ordB = b.displayOrder !== undefined ? Number(b.displayOrder) : 999;
         if (ordA !== ordB) return ordA - ordB;
         return (Number(a.categoryOrder) || 999) - (Number(b.categoryOrder) || 999);
       });
     }
-    return products
-      .filter((p) => (p.category || '').toLowerCase() === filter.toLowerCase())
-      .sort((a, b) => {
-        const ordA = a.categoryOrder !== undefined ? Number(a.categoryOrder) : (a.displayOrder !== undefined ? Number(a.displayOrder) : 999);
-        const ordB = b.categoryOrder !== undefined ? Number(b.categoryOrder) : (b.displayOrder !== undefined ? Number(b.displayOrder) : 999);
-        if (ordA !== ordB) return ordA - ordB;
-        return (Number(a.displayOrder) || 999) - (Number(b.displayOrder) || 999);
-      });
-  }, [products, filter]);
+
+    if (filter === 'chargers') {
+      list = list.filter((p) => (p.category || '').toLowerCase() === 'chargers');
+      if (chargerSubFilter === 'type-c') {
+        list = list.filter((p) => isTypeCCharger(p));
+      } else if (chargerSubFilter === 'usb-micro') {
+        list = list.filter((p) => isUsbMicroCharger(p));
+      }
+    } else if (filter === 'type-c') {
+      list = list.filter((p) => isTypeCCharger(p));
+    } else if (filter === 'usb-micro') {
+      list = list.filter((p) => isUsbMicroCharger(p));
+    } else {
+      list = list.filter((p) => (p.category || '').toLowerCase() === filter.toLowerCase());
+    }
+
+    return list.sort((a, b) => {
+      const ordA = a.categoryOrder !== undefined ? Number(a.categoryOrder) : (a.displayOrder !== undefined ? Number(a.displayOrder) : 999);
+      const ordB = b.categoryOrder !== undefined ? Number(b.categoryOrder) : (b.displayOrder !== undefined ? Number(b.displayOrder) : 999);
+      if (ordA !== ordB) return ordA - ordB;
+      return (Number(a.displayOrder) || 999) - (Number(b.displayOrder) || 999);
+    });
+  }, [products, filter, chargerSubFilter]);
+
+  const chargerCounts = React.useMemo(() => {
+    const chargersList = products.filter((p) => (p.category || '').toLowerCase() === 'chargers');
+    return {
+      all: chargersList.length,
+      typeC: chargersList.filter(isTypeCCharger).length,
+      usbMicro: chargersList.filter(isUsbMicroCharger).length,
+    };
+  }, [products]);
 
   const bestSellers = products.filter((p) => Boolean(p.isBestSeller));
   const hotDealProduct = products.find((p) => Boolean(p.isHotDeal));
@@ -449,7 +515,7 @@ export default function ProductGrid({ activeCategory, onAddToCart, refreshTrigge
         { opacity: 1, y: 0, duration: 0.35, stagger: 0.03, ease: 'power2.out', clearProps: 'transform' }
       );
     }
-  }, [filter]);
+  }, [filter, chargerSubFilter]);
 
   // GSAP scroll entrance animation for Best Sellers section
   useEffect(() => {
@@ -514,23 +580,48 @@ export default function ProductGrid({ activeCategory, onAddToCart, refreshTrigge
             ref={shopHeaderRef}
             className="pb-8 pt-2 border-b border-[#e5e0d4]/80 flex flex-col items-center text-center"
           >
-            {/* Section Title: Shop Now */}
+            {/* Section Title: Shop Now / Dynamic by category */}
             <h2 className="text-2xl sm:text-4xl font-light text-[#1c1b18] tracking-tight">
-              Shop Now
+              {filter === 'chargers' || filter === 'type-c' || filter === 'usb-micro' ? (
+                chargerSubFilter === 'type-c'
+                  ? 'Type-C Fast Chargers'
+                  : chargerSubFilter === 'usb-micro'
+                  ? 'USB Micro Fast Chargers'
+                  : 'Fast Chargers & Cables'
+              ) : filter === 'handsfree' ? (
+                'Handsfree & Wired Audio'
+              ) : filter === 'airpods' ? (
+                'AirPods & Wireless Earpods'
+              ) : (
+                'Shop Now'
+              )}
             </h2>
             <p className="text-xs sm:text-sm text-[#78746a] mt-1.5 font-light max-w-lg">
-              Original Mobile Accessories in Pakistan &bull; Wholesale &amp; Retail Sasta Charger, Earpods &amp; Handsfree Price
+              {filter === 'chargers' || filter === 'type-c' || filter === 'usb-micro' ? (
+                chargerSubFilter === 'type-c'
+                  ? 'High-speed USB-C PD power adapters, fast charging cables & universal GaN fast chargers.'
+                  : chargerSubFilter === 'usb-micro'
+                  ? 'Durable USB Micro charging adapters, braided data cables & reliable quick chargers.'
+                  : 'Original Type-C & USB Micro fast chargers, high-speed cables & power adapters in Pakistan.'
+              ) : (
+                'Original Mobile Accessories in Pakistan • Wholesale & Retail Sasta Charger, Earpods & Handsfree Price'
+              )}
             </p>
 
             {/* Categories with Icons Centered Below */}
             <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-2.5 mt-5">
               {CATEGORIES.map((tab) => {
                 const Icon = tab.icon;
-                const active = filter === tab.id;
+                const active = filter === tab.id || ((tab.id === 'chargers') && (filter === 'type-c' || filter === 'usb-micro'));
                 return (
                   <button
                     key={tab.id}
-                    onClick={() => setFilter(tab.id)}
+                    onClick={() => {
+                      setFilter(tab.id);
+                      if (tab.id === 'chargers') {
+                        setChargerSubFilter('all');
+                      }
+                    }}
                     className={`flex items-center gap-2 px-4 py-2 rounded-none text-xs font-medium tracking-wide transition-all cursor-pointer border ${active
                       ? 'bg-[#1c1b18] text-[#f6f5f0] border-[#1c1b18] shadow-xs'
                       : 'bg-white text-[#4a473f] border-[#dedad0] hover:border-[#1c1b18] hover:text-[#1c1b18]'
@@ -542,6 +633,68 @@ export default function ProductGrid({ activeCategory, onAddToCart, refreshTrigge
                 );
               })}
             </div>
+
+            {/* Charger Subcategories Switcher: All Chargers / Type-C / USB Micro */}
+            {(filter === 'chargers' || filter === 'type-c' || filter === 'usb-micro') && (
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-4 pt-3.5 border-t border-[#e5e0d4]/80 w-full max-w-md animate-in fade-in-50 duration-200">
+                <span className="text-[10px] font-bold text-[#78746a] uppercase tracking-wider mr-1 flex items-center gap-1">
+                  <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
+                  <span>Charger Type:</span>
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilter('chargers');
+                    setChargerSubFilter('all');
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-none border transition-all cursor-pointer ${
+                    chargerSubFilter === 'all'
+                      ? 'bg-[#1c1b18] text-[#f6f5f0] border-[#1c1b18] shadow-xs'
+                      : 'bg-white text-[#4a473f] border-[#dedad0] hover:border-[#1c1b18] hover:text-[#1c1b18]'
+                  }`}
+                >
+                  <span>All Chargers</span>
+                  <span className="text-[10px] opacity-75 font-mono">({chargerCounts.all})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilter('chargers');
+                    setChargerSubFilter('type-c');
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-none border transition-all cursor-pointer ${
+                    chargerSubFilter === 'type-c'
+                      ? 'bg-teal-700 text-white border-teal-700 shadow-xs'
+                      : 'bg-white text-teal-800 border-teal-300 hover:border-teal-700 hover:bg-teal-50/50'
+                  }`}
+                  title="Filter Type-C Chargers & Cables"
+                >
+                  <Cable className="w-3.5 h-3.5" />
+                  <span>Type-C</span>
+                  <span className="text-[10px] opacity-80 font-mono">({chargerCounts.typeC})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilter('chargers');
+                    setChargerSubFilter('usb-micro');
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-none border transition-all cursor-pointer ${
+                    chargerSubFilter === 'usb-micro'
+                      ? 'bg-blue-700 text-white border-blue-700 shadow-xs'
+                      : 'bg-white text-blue-800 border-blue-300 hover:border-blue-700 hover:bg-blue-50/50'
+                  }`}
+                  title="Filter USB Micro Chargers & Cables"
+                >
+                  <Usb className="w-3.5 h-3.5" />
+                  <span>USB Micro</span>
+                  <span className="text-[10px] opacity-80 font-mono">({chargerCounts.usbMicro})</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Loading state */}

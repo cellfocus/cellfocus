@@ -68,10 +68,10 @@ class StorageEngine {
       const conns = Array.isArray(p.connectorTypes) ? p.connectorTypes.map((c) => String(c).toLowerCase()) : [];
       const text = `${p.name || ''} ${p.details || ''} ${p.specs || ''}`.toLowerCase();
       if (target === 'type-c') {
-        return sub === 'type-c' || conns.includes('type-c') || text.includes('type-c') || text.includes('usb-c') || text.includes(' pd');
+        return sub === 'type-c' || sub === 'dual-pin' || conns.some((c) => c.includes('type-c') || c.includes('dual')) || text.includes('type-c') || text.includes('usb-c') || text.includes(' pd');
       }
       if (target === 'usb-micro') {
-        return sub === 'usb-micro' || conns.includes('usb micro') || conns.includes('micro usb') || text.includes('micro');
+        return sub === 'usb-micro' || sub === 'dual-pin' || conns.some((c) => c.includes('micro') || c.includes('dual')) || text.includes('micro');
       }
       return false;
     };
@@ -84,7 +84,9 @@ class StorageEngine {
             $or: [
               { category: 'type-c' },
               { subCategory: 'type-c' },
+              { subCategory: 'dual-pin' },
               { connectorTypes: 'Type-C' },
+              { connectorTypes: 'Dual Pin (Type-C & USB-Micro)' },
               { category: 'chargers', name: { $regex: /type-c|usb-c/i } },
             ],
           };
@@ -93,7 +95,9 @@ class StorageEngine {
             $or: [
               { category: 'usb-micro' },
               { subCategory: 'usb-micro' },
+              { subCategory: 'dual-pin' },
               { connectorTypes: 'USB Micro' },
+              { connectorTypes: 'Dual Pin (Type-C & USB-Micro)' },
               { category: 'chargers', name: { $regex: /micro/i } },
             ],
           };

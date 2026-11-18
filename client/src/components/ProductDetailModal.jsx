@@ -121,20 +121,22 @@ export default function ProductDetailModal({ product, isOpen, onClose, onAddToCa
   const inferredChargerType = React.useMemo(() => {
     if (!isCharger || !product) return null;
     const sub = (product.subCategory || '').toLowerCase();
+    if (sub === 'dual-pin' || sub === 'dual') return 'Dual Pin (Type-C & USB-Micro)';
     if (sub === 'type-c') return 'Type-C';
     if (sub === 'usb-micro') return 'USB Micro';
     const text = `${product.name || ''} ${product.details || ''} ${product.specs || ''}`.toLowerCase();
+    if (text.includes('dual pin') || text.includes('dual-pin') || (text.includes('type-c') && text.includes('micro'))) return 'Dual Pin (Type-C & USB-Micro)';
     if (text.includes('type-c') || text.includes('usb-c') || text.includes(' pd')) return 'Type-C';
     if (text.includes('micro') || text.includes('v8')) return 'USB Micro';
     return null;
   }, [product, isCharger]);
 
   const validConnectors = React.useMemo(() => {
-    if (!isCharger) return [];
     if (Array.isArray(product?.connectorTypes) && product.connectorTypes.length > 0) {
       return product.connectorTypes.filter((t) => t && typeof t === 'string' && t.trim().length > 0);
     }
-    return inferredChargerType ? [inferredChargerType] : [];
+    if (isCharger && inferredChargerType) return [inferredChargerType];
+    return [];
   }, [product?.connectorTypes, isCharger, inferredChargerType]);
 
   // Reset selected image, color, connector and quantity whenever the product changes or opens

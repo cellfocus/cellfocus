@@ -1877,51 +1877,69 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                   )}
                 </div>
 
-                {/* Connector Type / Subcategory Selector — chargers only */}
-                {form.category === 'chargers' && (
-                  <div className="p-3.5 rounded-xl border border-[#dedad0] bg-[#faf8f4]">
-                    <div className="mb-2">
-                      <span className="text-xs font-bold text-[#1c1b18] block">Charger Category &amp; Connector Options</span>
-                      <p className="text-[11px] text-[#78746a] mt-0.5">Select Type-C and/or USB Micro. Customers will see these as category filters on the shop page and as selectable options on the product card.</p>
-                    </div>
-                    <div className="flex gap-2 flex-wrap">
-                      {['Type-C', 'USB Micro'].map((ct) => {
-                        const isChecked = Array.isArray(form.connectorTypes) && form.connectorTypes.includes(ct);
-                        return (
-                          <button
-                            key={ct}
-                            type="button"
-                            onClick={() => {
-                              const current = Array.isArray(form.connectorTypes) ? form.connectorTypes : [];
-                              const updated = isChecked
-                                ? current.filter((x) => x !== ct)
-                                : [...current, ct];
-                              const updatedSub = updated.includes('Type-C') && !updated.includes('USB Micro')
-                                ? 'type-c'
-                                : updated.includes('USB Micro') && !updated.includes('Type-C')
-                                ? 'usb-micro'
-                                : '';
-                              setForm({ ...form, connectorTypes: updated, subCategory: updatedSub });
-                            }}
-                            className={`px-4 py-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                              isChecked
-                                ? 'bg-[#1c1b18] text-white border-[#1c1b18]'
-                                : 'bg-white text-[#1c1b18] border-[#dedad0] hover:border-[#1c1b18]/60'
-                            }`}
-                          >
-                            {isChecked && <Check className="w-3 h-3" strokeWidth={3} />}
-                            {ct}
-                          </button>
-                        );
-                      })}
-                    </div>
+                {/* Connector / Pin Type Selector — available for ANY item */}
+                <div className="p-3.5 rounded-xl border border-[#dedad0] bg-[#faf8f4]">
+                  <div className="mb-2">
+                    <span className="text-xs font-bold text-[#1c1b18] block">Connector / Pin Option (Optional)</span>
+                    <p className="text-[11px] text-[#78746a] mt-0.5">
+                      Select Type-C, USB Micro, or Dual Pin (Type-C &amp; USB-Micro). Whichever you choose will be displayed on the product card on the main store page.
+                    </p>
+                  </div>
+                  <div className="flex gap-2 flex-wrap items-center">
+                    {[
+                      { id: 'Type-C', label: 'Type-C', subCategory: 'type-c' },
+                      { id: 'USB Micro', label: 'USB Micro', subCategory: 'usb-micro' },
+                      { id: 'Dual Pin (Type-C & USB-Micro)', label: 'Dual Pin (Type-C & USB-Micro)', subCategory: 'dual-pin' },
+                    ].map((opt) => {
+                      const isChecked = Array.isArray(form.connectorTypes) && (
+                        form.connectorTypes.includes(opt.id) ||
+                        (opt.id === 'Dual Pin (Type-C & USB-Micro)' && form.connectorTypes.includes('Type-C') && form.connectorTypes.includes('USB Micro'))
+                      );
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => {
+                            if (isChecked) {
+                              setForm({ ...form, connectorTypes: [], subCategory: '' });
+                            } else {
+                              setForm({
+                                ...form,
+                                connectorTypes: [opt.id],
+                                subCategory: opt.subCategory,
+                              });
+                            }
+                          }}
+                          className={`px-3.5 py-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            isChecked
+                              ? 'bg-[#1c1b18] text-white border-[#1c1b18] shadow-xs'
+                              : 'bg-white text-[#1c1b18] border-[#dedad0] hover:border-[#1c1b18]/60 hover:bg-[#f4f2ea]'
+                          }`}
+                        >
+                          {isChecked && <Check className="w-3.5 h-3.5" strokeWidth={3} />}
+                          <span>{opt.label}</span>
+                        </button>
+                      );
+                    })}
+
                     {Array.isArray(form.connectorTypes) && form.connectorTypes.length > 0 && (
-                      <p className="text-[11px] text-emerald-700 mt-2 font-medium">
-                        ✓ Selected: {form.connectorTypes.join(', ')}
-                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, connectorTypes: [], subCategory: '' })}
+                        className="px-3 py-1.5 rounded-xl border border-dashed border-[#dedad0] text-xs font-medium text-[#78746a] hover:text-rose-600 hover:border-rose-300 hover:bg-rose-50/50 transition cursor-pointer"
+                        title="Clear pin selection"
+                      >
+                        Clear / None
+                      </button>
                     )}
                   </div>
-                )}
+                  {Array.isArray(form.connectorTypes) && form.connectorTypes.length > 0 && (
+                    <p className="text-[11px] text-emerald-700 mt-2 font-medium flex items-center gap-1">
+                      <span>✓ Selected:</span>
+                      <span className="font-bold">{form.connectorTypes.join(', ')}</span>
+                    </p>
+                  )}
+                </div>
 
                 {/* Color Variants Manager — available for ANY category */}
                 <div className="p-3.5 rounded-xl border border-[#dedad0] bg-[#faf8f4] space-y-3">

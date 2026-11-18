@@ -35,6 +35,25 @@ export const isUsbMicroCharger = (p) => {
   return text.includes('micro') || text.includes('v8');
 };
 
+export const isDualPinCharger = (p) => {
+  const cat = (p.category || '').toLowerCase();
+  const isChg = cat === 'chargers' || cat === 'dual-pin';
+  if (!isChg) return false;
+  const sub = (p.subCategory || '').toLowerCase();
+  if (sub === 'dual-pin' || sub === 'dual') return true;
+  if (Array.isArray(p.connectorTypes)) {
+    if (p.connectorTypes.some((ct) => /dual/i.test(ct))) return true;
+    if (
+      p.connectorTypes.some((ct) => /type-?c|usb-?c/i.test(ct)) &&
+      p.connectorTypes.some((ct) => /micro/i.test(ct))
+    ) {
+      return true;
+    }
+  }
+  const text = `${p.name || ''} ${p.details || ''} ${p.specs || ''}`.toLowerCase();
+  return text.includes('dual pin') || text.includes('dual-pin') || (text.includes('type-c') && text.includes('micro'));
+};
+
 const CATEGORIES = [
   { id: 'all', label: 'All', icon: LayoutGrid },
   { id: 'chargers', label: 'Chargers', icon: Zap },
@@ -64,21 +83,22 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
     }
   }, [validColors]);
 
-  // Connector type (Type-C / Micro USB) — shown for chargers only
+  // Connector type (Type-C / Micro USB / Dual Pin) — shown whenever item has connectors or inferred
   const isCharger = (product.category || '').toLowerCase() === 'chargers';
   const primaryChargerType = React.useMemo(() => {
     if (!isCharger) return null;
+    if (isDualPinCharger(product)) return 'Dual Pin (Type-C & USB-Micro)';
     if (isTypeCCharger(product)) return 'Type-C';
     if (isUsbMicroCharger(product)) return 'USB Micro';
     return null;
   }, [product, isCharger]);
 
   const validConnectors = React.useMemo(() => {
-    if (!isCharger) return [];
     if (Array.isArray(product.connectorTypes) && product.connectorTypes.length > 0) {
       return product.connectorTypes.filter((t) => t && typeof t === 'string' && t.trim().length > 0);
     }
-    return primaryChargerType ? [primaryChargerType] : [];
+    if (isCharger && primaryChargerType) return [primaryChargerType];
+    return [];
   }, [product.connectorTypes, isCharger, primaryChargerType]);
 
   const [selectedConnector, setSelectedConnector] = useState(
@@ -432,6 +452,8 @@ export default function ProductGrid({ activeCategory, onAddToCart, refreshTrigge
         list = list.filter((p) => isTypeCCharger(p));
       } else if (chargerSubFilter === 'usb-micro') {
         list = list.filter((p) => isUsbMicroCharger(p));
+      } else if (chargerSubFilter === 'dual-pin') {
+        list = list.filter((p) => isDualPinCharger(p));
       }
     } else if (filter === 'type-c') {
       list = list.filter((p) => isTypeCCharger(p));
@@ -455,6 +477,7 @@ export default function ProductGrid({ activeCategory, onAddToCart, refreshTrigge
       all: chargersList.length,
       typeC: chargersList.filter(isTypeCCharger).length,
       usbMicro: chargersList.filter(isUsbMicroCharger).length,
+      dualPin: chargersList.filter(isDualPinCharger).length,
     };
   }, [products]);
 
@@ -693,6 +716,26 @@ export default function ProductGrid({ activeCategory, onAddToCart, refreshTrigge
                   <span>USB Micro</span>
                   <span className="text-[10px] opacity-80 font-mono">({chargerCounts.usbMicro})</span>
                 </button>
+
+                {chargerCounts.dualPin > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilter('chargers');
+                      setChargerSubFilter('dual-pin');
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-none border transition-all cursor-pointer ${
+                      chargerSubFilter === 'dual-pin'
+                        ? 'bg-[#1c1b18] text-[#f6f5f0] border-[#1c1b18] shadow-xs'
+                        : 'bg-white text-[#1c1b18] border-[#dedad0] hover:border-[#1c1b18] hover:bg-[#f4f2ea]'
+                    }`}
+                    title="Filter Dual Pin (Type-C & USB-Micro) Chargers"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>Dual Pin</span>
+                    <span className="text-[10px] opacity-80 font-mono">({chargerCounts.dualPin})</span>
+                  </button>
+                )}
               </div>
             )}
           </div>

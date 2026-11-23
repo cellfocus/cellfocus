@@ -1,6 +1,21 @@
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
+const path = require('path');
 const repo = require('../storage');
+const {
+  BASE_URL,
+  DEFAULT_IMAGE,
+  CATEGORY_SEO,
+  STATIC_PAGES_SEO,
+  slugify,
+  resolveImageUrl,
+  generatePageSeo,
+  generateProductSeo,
+  generateCategorySeo,
+  parseProductSlug,
+  injectSeoIntoHtml,
+} = require('../services/seoEngine');
 
 function resolveSiteUrl() {
   const raw =
@@ -8,26 +23,23 @@ function resolveSiteUrl() {
     process.env.NEXT_PUBLIC_SITE_URL ||
     process.env.BASE_URL ||
     process.env.DOMAIN ||
-    'https://www.cellfocusaccessories.com';
+    BASE_URL;
   let clean = String(raw).trim().replace(/\/+$/, '');
-  // Canonicalize old domain or non-www variant to primary production domain
   if (
     clean.includes('cellfocus.pk') ||
     clean === 'https://cellfocusaccessories.com' ||
     clean === 'http://cellfocusaccessories.com'
   ) {
-    clean = 'https://www.cellfocusaccessories.com';
+    clean = BASE_URL;
   }
   return clean;
 }
 
-// Helper to remove any URL hash fragment (RFC/Google Sitemaps reject fragments)
 function stripHash(url) {
   if (!url) return '';
   return String(url).split('#')[0];
 }
 
-// Helper to escape XML characters
 function escapeXml(unsafe) {
   if (!unsafe) return '';
   return String(unsafe)
@@ -38,19 +50,36 @@ function escapeXml(unsafe) {
     .replace(/'/g, '&apos;');
 }
 
-// Helper to create an SEO-friendly slug
-function createSlug(name) {
-  if (!name) return 'product';
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
+/**
+ * 301 Permanent Redirects for legacy query-string URLs:
+ * e.g., /?product=slug&id=123 -> /product/slug-123
+ * e.g., /?category=chargers -> /category/chargers
+ */
+router.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
+
+  const queryProduct = req.query.product;
+  const queryId = req.query.id;
+  const queryCat = req.query.category;
+
+  if (queryProduct && queryId) {
+    const cleanSlug = slugify(queryProduct);
+    const cleanId = String(queryId).trim();
+    return res.redirect(301, `/product/${cleanSlug}-${cleanId}`);
+  }
+
+  if (queryCat && queryCat !== 'all') {
+    const cleanCat = String(queryCat).toLowerCase().trim();
+    return res.redirect(301, `/category/${cleanCat}`);
+  }
+
+  next();
+});
 
 /**
  * Dynamic XML Sitemap endpoint
- * Returns a complete, valid XML sitemap including static routes, categories, and dynamic products.
- * Guarantees all <loc> entries use the canonical domain and contain NO hash fragments.
+ * Returns a complete, valid XML sitemap with clean canonical URLs.
+ * Guarantees NO query strings and NO hash fragments.
  */
 router.get('/sitemap.xml', async (req, res) => {
   try {
@@ -61,7 +90,14 @@ router.get('/sitemap.xml', async (req, res) => {
     const seenLocs = new Set();
     let entriesXml = '';
 
-    const addEntry = ({ loc, lastmod = today, changefreq = 'daily', priority = '0.8', images = [], alternates = [] }) => {
+    const addEntry = ({
+      loc,
+      lastmod = today,
+      changefreq = 'daily',
+      priority = '0.8',
+      images = [],
+      alternates = [],
+    }) => {
       const cleanLoc = stripHash(loc);
       if (!cleanLoc || seenLocs.has(cleanLoc)) return;
       seenLocs.add(cleanLoc);
@@ -89,96 +125,86 @@ router.get('/sitemap.xml', async (req, res) => {
       entriesXml += entry;
     };
 
-    // 1. Primary Storefront Homepage
+    // 1. Storefront Homepage
     addEntry({
       loc: `${baseUrl}/`,
       priority: '1.0',
       changefreq: 'daily',
       alternates: [
         { hreflang: 'en-pk', href: `${baseUrl}/` },
-        { hreflang: 'ur-pk', href: `${baseUrl}/` },
         { hreflang: 'x-default', href: `${baseUrl}/` },
       ],
       images: [
         {
-          loc: `${baseUrl}/hero-cellfocus-airpods-pro.jpg`,
-          title: 'CellFocus Original Wireless Earpods Pakistan',
-          caption: 'Wholesale and retail wireless earpods with active noise cancellation in Pakistan.',
-        },
-        {
-          loc: `${baseUrl}/hero-cellfocus-cyber-charger.jpg`,
-          title: 'CellFocus Cyber Fast Charger 65W GaN Pakistan',
-          caption: 'High-speed GaN fast charger with dual type-c power delivery.',
-        },
-        {
-          loc: `${baseUrl}/hero-cellfocus-gan-charger.jpg`,
-          title: 'CellFocus Ultra Fast Power Adapter Pakistan',
-          caption: 'Sasta fast charger price in Pakistan with 24h nationwide dispatch.',
+          loc: `${baseUrl}/og-share-card.jpg`,
+          title: 'CellFocus Wholesale & Retail Mobile Accessories Pakistan',
+          caption: 'Original smartwatches, earpods, fast chargers & handsfree nationwide.',
         },
       ],
     });
 
-    // 2. High-Intent Category Views (clean query params with NO # hash fragment)
-    const categoryConfigs = [
-      {
-        slug: 'chargers',
-        title: 'Wholesale Fast Chargers Price in Pakistan | CellFocus',
-        img: `${baseUrl}/hero-cellfocus-cyber-charger.jpg`,
-      },
-      {
-        slug: 'airpods',
-        title: 'Original Earpods Wholesale Price Lahore Karachi | CellFocus',
-        img: `${baseUrl}/hero-cellfocus-airpods-pro.jpg`,
-      },
-      {
-        slug: 'handsfree',
-        title: 'Handsfree Wholesale Rate in Pakistan | CellFocus',
-        img: `${baseUrl}/cellfocus-airpods.png`,
-      },
-      {
-        slug: 'smartwatches',
-        title: 'Best Smart Watch Pakistan Mein | CellFocus Smartwatches',
-        img: `${baseUrl}/hero-cellfocus-pro.jpg`,
-      },
-      {
-        slug: 'powerbanks',
-        title: 'Fast Charging Power Banks Wholesale Pakistan | CellFocus',
-        img: `${baseUrl}/hero-cellfocus-gan-charger.jpg`,
-      },
-    ];
+    // 2. High-Intent Dedicated Wholesale Page
+    addEntry({
+      loc: `${baseUrl}/wholesale`,
+      priority: '0.95',
+      changefreq: 'weekly',
+      images: [
+        {
+          loc: `${baseUrl}/og-share-card.jpg`,
+          title: 'CellFocus Mobile Accessories Wholesale Pakistan',
+          caption: 'Wholesale mobile accessories bulk supplier in Pakistan.',
+        },
+      ],
+    });
 
-    for (const cat of categoryConfigs) {
+    // 3. Clean Category Pages
+    const categories = Object.keys(CATEGORY_SEO);
+    for (const catKey of categories) {
+      const cat = CATEGORY_SEO[catKey];
       addEntry({
-        loc: `${baseUrl}/?category=${cat.slug}`,
+        loc: `${baseUrl}/category/${catKey}`,
         priority: '0.9',
         changefreq: 'daily',
-        images: [{ loc: cat.img, title: cat.title }],
+        images: [{ loc: DEFAULT_IMAGE, title: cat.title }],
       });
     }
 
-    // 3. Dynamic Products from Database
+    // 4. Clean Product Pages
     if (Array.isArray(products)) {
       products.forEach((p) => {
         const pid = p.id || p._id;
         if (!pid) return;
-        const slug = createSlug(p.name);
-        const pUrl = `${baseUrl}/?product=${encodeURIComponent(slug)}&id=${encodeURIComponent(pid)}`;
+        const slug = slugify(p.name);
+        const pUrl = `${baseUrl}/product/${slug}-${pid}`;
         const lastMod = p.updatedAt ? new Date(p.updatedAt).toISOString().split('T')[0] : today;
-        const imageUrl = p.image && p.image.startsWith('http') ? p.image : `${baseUrl}/logo.png`;
+        const imageUrl = resolveImageUrl(
+          p.image || (Array.isArray(p.images) && p.images[0]),
+          baseUrl
+        );
 
         addEntry({
           loc: pUrl,
           lastmod: lastMod,
           changefreq: 'weekly',
-          priority: '0.8',
+          priority: '0.85',
           images: [
             {
               loc: imageUrl,
-              title: `${p.name} - CellFocus Pakistan Wholesale & Retail`,
+              title: `${p.name} Price in Pakistan | CellFocus`,
               caption: p.description || p.name,
             },
           ],
         });
+      });
+    }
+
+    // 5. Static Policy & Information Pages
+    const staticSlugs = ['about', 'contact', 'shipping-policy', 'warranty-policy', 'privacy-policy'];
+    for (const s of staticSlugs) {
+      addEntry({
+        loc: `${baseUrl}/${s}`,
+        priority: '0.6',
+        changefreq: 'monthly',
       });
     }
 
@@ -209,17 +235,25 @@ router.get('/robots.txt', (req, res) => {
 
 User-agent: *
 Allow: /
+Allow: /category/
+Allow: /product/
+Allow: /wholesale
+Allow: /about
+Allow: /contact
+Allow: /shipping-policy
+Allow: /warranty-policy
+Allow: /privacy-policy
 Allow: /sitemap.xml
 
-# Block internal admin, private APIs, and cart checkout payloads
+# Block internal admin, private APIs, and checkout flows
 Disallow: /admin
 Disallow: /cf-admin
 Disallow: /?admin=*
 Disallow: /?portal=*
 Disallow: /?token=*
-Disallow: /api/admin/
-Disallow: /api/upload/
-Disallow: /api/orders/track
+Disallow: /api/
+Disallow: /checkout
+Disallow: /cart
 
 # Crawl-delay for polite indexing
 Crawl-delay: 1
@@ -235,7 +269,6 @@ Sitemap: ${baseUrl}/sitemap.xml
 
 /**
  * Google Search Console HTML Verification Route
- * Handles /googlefea0ecee8dade37b.html (and any standard Google verification file)
  */
 router.get('/google:code.html', (req, res, next) => {
   const code = req.params.code;
@@ -246,5 +279,88 @@ router.get('/google:code.html', (req, res, next) => {
   next();
 });
 
-module.exports = router;
+/**
+ * Server-Side HTML Delivery with Dynamic Meta & Schema Injection
+ * Serves / , /category/:slug, /product/:slugWithId, /wholesale, and static pages
+ */
+async function handleSeoPage(req, res, next) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    return next();
+  }
 
+  // Skip API routes, static assets, or uploads
+  if (
+    req.path.startsWith('/api') ||
+    req.path.startsWith('/uploads') ||
+    req.path.startsWith('/products') ||
+    /\.(js|css|png|jpg|jpeg|gif|svg|ico|webp|avif|json|woff|woff2|ttf|map)$/i.test(req.path)
+  ) {
+    return next();
+  }
+
+  // Admin route protection
+  if (/^\/(cf-)?admin(\/|$)/i.test(req.path) || req.query.admin !== undefined) {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  }
+
+  try {
+    const distHtmlPath = path.join(__dirname, '..', '..', 'client', 'dist', 'index.html');
+    const devHtmlPath = path.join(__dirname, '..', '..', 'client', 'index.html');
+    const templatePath = fs.existsSync(distHtmlPath) ? distHtmlPath : devHtmlPath;
+
+    if (!fs.existsSync(templatePath)) {
+      return next();
+    }
+
+    const htmlTemplate = fs.readFileSync(templatePath, 'utf8');
+    const products = await repo.getAllProducts();
+    const baseUrl = resolveSiteUrl();
+
+    // Check if requesting a single product
+    const prodMatch = req.path.match(/^\/product\/([a-z0-9_-]+)/i);
+    if (prodMatch) {
+      const slugWithId = prodMatch[1];
+      const product = parseProductSlug(slugWithId, products);
+      if (!product) {
+        // Return a real 404 status with custom 404 HTML
+        res.status(404);
+        const notFoundSeo = {
+          title: 'Product Not Found | CellFocus Pakistan',
+          description: 'The requested mobile accessory could not be found. Explore our latest chargers, earpods, and smartwatches.',
+          canonical: `${baseUrl}/`,
+          ogImage: DEFAULT_IMAGE,
+          ogType: 'website',
+          schemas: [],
+        };
+        const rendered = injectSeoIntoHtml(htmlTemplate, notFoundSeo);
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.send(rendered);
+      }
+    }
+
+    const seoData = generatePageSeo(req.path, req.query, products, baseUrl);
+    const renderedHtml = injectSeoIntoHtml(htmlTemplate, seoData);
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=120, s-maxage=300');
+    return res.status(200).send(renderedHtml);
+  } catch (err) {
+    console.error('SEO Page Rendering error:', err);
+    next();
+  }
+}
+
+// Attach SEO Page Renderer to relevant public routes
+router.get('/', handleSeoPage);
+router.get('/wholesale', handleSeoPage);
+router.get('/category/:slug', handleSeoPage);
+router.get('/product/:slugWithId', handleSeoPage);
+router.get('/about', handleSeoPage);
+router.get('/contact', handleSeoPage);
+router.get('/shipping-policy', handleSeoPage);
+router.get('/warranty-policy', handleSeoPage);
+router.get('/privacy-policy', handleSeoPage);
+
+router.handleSeoPage = handleSeoPage;
+module.exports = router;

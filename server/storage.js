@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { processProductImages } = require('./services/imageOptimizer');
 const initialProducts = require('./data/seedProducts');
 const initialOrders = require('./data/seedOrders');
 const initialReviews = require('./data/seedReviews');
@@ -147,6 +148,7 @@ class StorageEngine {
   }
 
   async createProduct(data) {
+    data = await processProductImages(data);
     if (this.useMongo) {
       if (data.isHotDeal) {
         await Product.updateMany({}, { isHotDeal: false });
@@ -189,6 +191,7 @@ class StorageEngine {
   }
 
   async updateProduct(id, data) {
+    data = await processProductImages(data);
     if (this.useMongo) {
       if (data.isHotDeal) {
         await Product.updateMany({ _id: { $ne: id } }, { isHotDeal: false });

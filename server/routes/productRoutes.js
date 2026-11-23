@@ -8,6 +8,7 @@ router.get('/', async (req, res) => {
   try {
     const { category } = req.query;
     const products = await repo.getAllProducts(category);
+    res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
     res.json({ success: true, count: products.length, data: products });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -21,6 +22,7 @@ router.get('/:id', async (req, res) => {
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
+    res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
     res.json({ success: true, data: product });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

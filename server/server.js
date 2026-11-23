@@ -1,4 +1,5 @@
 const express = require('express');
+const compression = require('compression');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
@@ -27,6 +28,32 @@ app.set('trust proxy', 1);
 app.use(helmetMiddleware);
 app.use(cors(corsOptionsDelegate));
 app.use(generalApiLimiter);
+
+// High-Performance HTTP Gzip/Deflate Compression (lightweight server load, fast transfer)
+app.use(compression({
+  threshold: 1024, // only compress responses above 1KB
+}));
+
+// Static media asset serving with long-term immutable caching
+const UPLOADS_DIR = path.join(__dirname, '..', 'client', 'public', 'uploads');
+const PRODUCTS_DIR = path.join(__dirname, '..', 'client', 'public', 'products');
+
+if (fs.existsSync(UPLOADS_DIR)) {
+  app.use('/uploads', express.static(UPLOADS_DIR, {
+    maxAge: '30d',
+    immutable: true,
+    etag: true,
+    lastModified: true,
+  }));
+}
+if (fs.existsSync(PRODUCTS_DIR)) {
+  app.use('/products', express.static(PRODUCTS_DIR, {
+    maxAge: '30d',
+    immutable: true,
+    etag: true,
+    lastModified: true,
+  }));
+}
 
 // Secured Body-Parser (Standard limit 2MB to prevent memory exhaustion DoS)
 app.use(express.json({ limit: '2mb' }));
@@ -122,6 +149,9 @@ if (fs.existsSync(CLIENT_INDEX_HTML)) {
       res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     }
+    if (typeof seoRoutes.handleSeoPage === 'function') {
+      return seoRoutes.handleSeoPage(req, res, () => res.sendFile(CLIENT_INDEX_HTML));
+    }
     return res.sendFile(CLIENT_INDEX_HTML);
   });
 }
@@ -161,6 +191,53 @@ async function startServer() {
     console.log(`🚀 [Server] CellFocus API running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
     // Initialize Baileys Multi-Device WhatsApp Bot
     baileysManager.init();
+
+    // Automatic Live Store Pricing Sync (in development mode / localhost)
+    if (process.env.NODE_ENV !== 'production') {
+      setTimeout(async () => {
+        try {
+          const https = require('https');
+          https.get('https://cellfocusaccessories.com/api/products', (res) => {
+            let data = '';
+            res.on('data', c => data += c);
+            res.on('end', async () => {
+              try {
+                const json = JSON.parse(data);
+                const liveList = json.data || json;
+                if (!Array.isArray(liveList) || liveList.length === 0) return;
+
+                const localProducts = await repo.getAllProducts();
+                let changed = false;
+
+                for (const liveItem of liveList) {
+                  const match = localProducts.find(p => (p.id && p.id === liveItem.id) || (p._id && p._id === liveItem._id))
+                    || localProducts.find(p => p.name === liveItem.name);
+                  if (match) {
+                    if (match.price !== Number(liveItem.price) || match.isOnSale !== Boolean(liveItem.isOnSale) || match.originalPrice !== Number(liveItem.originalPrice || 0)) {
+                      await repo.updateProduct(match.id || match._id, {
+                        price: Number(liveItem.price),
+                        originalPrice: Number(liveItem.originalPrice) || 0,
+                        isOnSale: Boolean(liveItem.isOnSale),
+                        stock: Number(liveItem.stock) || match.stock,
+                      });
+                      changed = true;
+                    }
+                  }
+                }
+                if (changed) {
+                  console.log('✓ [Auto-Sync] Local products automatically synchronized with live production pricing!');
+                  try {
+                    const clientPath = path.join(__dirname, '..', 'client', 'src', 'data', 'defaultProducts.json');
+                    const current = await repo.getAllProducts();
+                    fs.writeFileSync(clientPath, JSON.stringify(current, null, 2), 'utf8');
+                  } catch (e) {}
+                }
+              } catch (e) {}
+            });
+          }).on('error', () => {});
+        } catch (e) {}
+      }, 1500);
+    }
   });
 
   // Graceful shutdown handling for PM2 and process monitors

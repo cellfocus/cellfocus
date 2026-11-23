@@ -42,11 +42,22 @@ mkdir -p "$APP_DIR/logs"
 
 # 4. Pull or navigate to repository
 cd "$APP_DIR"
+
+# Safeguard: Backup live production products before git pull to ensure live prices & sales are never lost
+if [ -f "server/data/products.json" ]; then
+  cp "server/data/products.json" "/tmp/products_live_backup.json"
+fi
+
 if [ -d ".git" ]; then
   echo "🔄 Step 2: Fetching latest code from GitHub..."
   git pull origin main || git pull origin master
 else
   echo "ℹ️ Current folder is not a git repo, proceeding with local build files."
+fi
+
+# Restore live production inventory data
+if [ -f "/tmp/products_live_backup.json" ]; then
+  cp "/tmp/products_live_backup.json" "server/data/products.json"
 fi
 
 # 5. Check server environment file

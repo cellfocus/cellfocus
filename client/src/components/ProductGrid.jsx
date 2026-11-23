@@ -10,6 +10,7 @@ import FAQSection from './FAQSection';
 import AboutUsSection from './AboutUsSection';
 import ReturnPolicySection from './ReturnPolicySection';
 import ContactUsSection from './ContactUsSection';
+import CategoryGuide from './CategoryGuide';
 import defaultProducts from '../data/defaultProducts.json';
 import { ENDPOINTS } from '../config/api';
 
@@ -202,20 +203,24 @@ function ProductCard({ product, onAdd, isAdded, className = '', onSelectProduct 
         className="relative aspect-square rounded-none overflow-hidden bg-[#f4f2ea] mb-2.5 group/media"
         onMouseMove={handleMouseMove}
       >
-        {allImages.map((src, idx) => (
-          <img
-            key={idx}
-            src={src}
-            alt={`${product.name} - CellFocus Original Mobile Accessories Pakistan, Wholesale & Retail (${product.category || 'Accessories'})`}
-            loading="lazy"
-            decoding="async"
-            className={`absolute inset-0 w-full h-full object-contain p-2 sm:p-2.5 transition-all duration-700 ease-out will-change-transform ${
-              idx === activeImageIndex
-                ? 'opacity-100 scale-[1.03] z-10'
-                : 'opacity-0 scale-100 z-0 pointer-events-none'
-            }`}
-          />
-        ))}
+        {allImages.map((src, idx) => {
+          // Lightweight DOM & network optimization: Only mount secondary images when hovered or active
+          if (idx !== activeImageIndex && !isHovered && idx !== 0) return null;
+          return (
+            <img
+              key={idx}
+              src={src}
+              alt={`${product.name} - CellFocus Original Mobile Accessories Pakistan, Wholesale & Retail (${product.category || 'Accessories'})`}
+              loading="lazy"
+              decoding="async"
+              className={`absolute inset-0 w-full h-full object-contain p-2 sm:p-2.5 transition-all duration-700 ease-out will-change-transform ${
+                idx === activeImageIndex
+                  ? 'opacity-100 scale-[1.03] z-10'
+                  : 'opacity-0 scale-100 z-0 pointer-events-none'
+              }`}
+            />
+          );
+        })}
 
         {/* Minimal clean progress indicator when hovered on multi-picture items */}
         {allImages.length > 1 && isHovered && (
@@ -598,6 +603,9 @@ export default function ProductGrid({ activeCategory, onAddToCart, refreshTrigge
         className="w-full bg-white border-b border-[#e6e2d8] py-14 sm:py-20"
       >
         <div className="max-w-6xl mx-auto px-6">
+          {/* SEO Rich Category Buying Guide & Breadcrumbs */}
+          <CategoryGuide category={filter} />
+
           {/* ALL PRODUCTS / SHOP NOW CATEGORY BROWSER */}
           <div
             ref={shopHeaderRef}

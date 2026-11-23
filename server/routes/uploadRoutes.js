@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const cloudinaryService = require('../services/cloudinaryService');
+const { optimizeAndSaveBase64, isBase64Image } = require('../services/imageOptimizer');
 const { requireAdminAuth, uploadLimiter } = require('../middleware/security');
 
 // Dedicated scoped body parser for image upload payloads (up to 15mb)
@@ -32,22 +33,33 @@ router.post('/image', requireAdminAuth, uploadLimiter, async (req, res) => {
 
     const result = await cloudinaryService.uploadImage(image, uploadOptions);
 
-    if (!result.success) {
-      return res.status(500).json({
-        success: false,
-        message: result.error || 'Failed to upload image to Cloudinary.',
+    if (result && result.success) {
+      return res.json({
+        success: true,
+        message: 'Image uploaded to Cloudinary successfully!',
+        url: result.url,
+        publicId: result.publicId,
+        format: result.format,
+        width: result.width,
+        height: result.height,
+        bytes: result.bytes,
       });
     }
 
-    return res.json({
-      success: true,
-      message: 'Image uploaded to Cloudinary successfully!',
-      url: result.url,
-      publicId: result.publicId,
-      format: result.format,
-      width: result.width,
-      height: result.height,
-      bytes: result.bytes,
+    // Cloudinary unavailable or not configured — seamlessly fallback to local WebP optimizer
+    if (isBase64Image(image)) {
+      const localUrl = await optimizeAndSaveBase64(image, 'admin-upload');
+      return res.json({
+        success: true,
+        message: 'Image automatically optimized & saved as high-efficiency WebP!',
+        url: localUrl,
+        format: 'webp',
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: result?.error || 'Failed to upload image.',
     });
   } catch (err) {
     console.error('[Upload Route] Error uploading image:', err);

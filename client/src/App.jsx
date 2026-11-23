@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import Lenis from 'lenis';
 import Navbar from './components/Navbar';
 import HeroSection from './components/HeroSection';
@@ -9,6 +10,9 @@ import ThreadsLoader from './components/ThreadsLoader';
 import PageSkeleton from './components/PageSkeleton';
 import WhatsAppButton from './components/WhatsAppButton';
 import SEOHead from './components/SEOHead';
+import WholesalePage from './pages/WholesalePage';
+import ProductPage from './pages/ProductPage';
+import { slugify } from './config/seoConfig';
 
 // Lazy-loaded heavy modal and admin components for optimal initial bundle & instant TTI
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
@@ -54,19 +58,11 @@ function isAdminEntryUrl() {
 }
 
 function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const initialAdminEntry = isAdminEntryUrl();
-  const isReturningVisitor = typeof window !== 'undefined' && (
-    initialAdminEntry || Boolean(sessionStorage.getItem('cf_visited'))
-  );
-
-  // Staged initial load: instant 0ms 'ready' for reloads & returning sessions; sleek brief intro on cold visit
-  const [loadingStage, setLoadingStage] = useState(isReturningVisitor ? 'ready' : 'loader');
-
-  useEffect(() => {
-    try {
-      sessionStorage.setItem('cf_visited', 'true');
-    } catch (e) {}
-  }, []);
+  // Show 2-second brand starter page on store load; skip directly to admin when opening admin URL
+  const [loadingStage, setLoadingStage] = useState(initialAdminEntry ? 'ready' : 'loader');
 
   useEffect(() => {
     if (loadingStage === 'skeleton') {
@@ -304,12 +300,69 @@ function App() {
     setIsCartOpen(true);
   };
 
+  // Synchronize category or static routes from pathname
+  useEffect(() => {
+    const path = location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+    if (path.startsWith('/category/')) {
+      const cat = path.replace('/category/', '').trim();
+      if (cat) setSelectedCategory(cat);
+    }
+  }, [location.pathname]);
+
+  // Legacy query string 301/client-side redirects (?product=slug&id=123 -> /product/slug-123)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(location.search);
+      const qProduct = params.get('product');
+      const qId = params.get('id');
+      const qCat = params.get('category');
+      if (qProduct && qId) {
+        navigate(`/product/${slugify(qProduct)}-${qId}`, { replace: true });
+      } else if (qCat && qCat !== 'all') {
+        navigate(`/category/${qCat}`, { replace: true });
+      }
+    } catch (e) {}
+  }, [location.search, navigate]);
+
+  // Smooth scroll to static policy sections when opening /about, /contact, /warranty-policy, /shipping-policy
+  useEffect(() => {
+    if (loadingStage !== 'ready') return;
+    const path = location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+    let targetId = null;
+    if (path === '/about') targetId = 'about-us';
+    else if (path === '/contact') targetId = 'contact';
+    else if (path === '/shipping-policy' || path === '/warranty-policy') targetId = 'returns';
+    else if (path === '/privacy-policy') targetId = 'footer';
+
+    if (targetId) {
+      setTimeout(() => {
+        const el = document.getElementById(targetId);
+        if (el) {
+          if (window.lenis) {
+            window.lenis.scrollTo(el, { offset: -70, duration: 1.1 });
+          } else {
+            el.scrollIntoView({ behavior: 'smooth' });
+          }
+        }
+      }, 250);
+    }
+  }, [location.pathname, loadingStage]);
+
   const handleOpenDetail = (product) => {
     setDetailProduct(product);
+    try {
+      const pid = product.id || product._id;
+      const slug = slugify(product.name);
+      window.history.pushState(null, '', `/product/${slug}-${pid}`);
+    } catch (e) {}
   };
 
   const handleCloseDetail = () => {
     setDetailProduct(null);
+    try {
+      const fallbackUrl = selectedCategory && selectedCategory !== 'all' ? `/category/${selectedCategory}` : '/';
+      window.history.pushState(null, '', fallbackUrl);
+    } catch (e) {}
   };
 
   const handleUpdateQty = (id, delta) => {
@@ -336,6 +389,10 @@ function App() {
 
   const handleCategorySelect = (categoryId) => {
     setSelectedCategory(categoryId);
+    try {
+      const targetUrl = categoryId && categoryId !== 'all' ? `/category/${categoryId}` : '/';
+      window.history.pushState(null, '', targetUrl);
+    } catch (e) {}
     const element = document.getElementById('products');
     if (element) {
       if (window.lenis) {
@@ -348,10 +405,15 @@ function App() {
 
   const totalCartCount = cartItems.reduce((acc, curr) => acc + curr.qty, 0);
 
+  const isWholesaleRoute = location.pathname.toLowerCase().replace(/\/+$/, '') === '/wholesale';
+  const isDirectProductRoute = location.pathname.toLowerCase().startsWith('/product/') && !detailProduct;
+
   return (
     <div className="min-h-screen bg-[#f7f4ec] text-[#1c1b18] flex flex-col font-sans selection:bg-[#e5e0d4] relative overflow-x-clip">
       {/* Dynamic SEO Head with schema and meta tags */}
-      <SEOHead category={selectedCategory} product={detailProduct} />
+      {!isWholesaleRoute && !isDirectProductRoute && (
+        <SEOHead category={selectedCategory} product={detailProduct} />
+      )}
       
       {/* Global Seamless Blended Background Aura across entire website (GPU accelerated for 120fps scrolling) */}
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden transform-gpu will-change-transform">
@@ -368,14 +430,36 @@ function App() {
         <div className="absolute -bottom-40 left-1/4 w-[720px] h-[720px] bg-gradient-to-t from-amber-100/35 via-[#00FFFF]/[0.05] to-transparent rounded-full blur-[150px] transform-gpu will-change-transform" />
       </div>
 
-      {/* Stage 1: Monotone Animated Loader (sleek 650ms for cold session only) */}
+      {/* Stage 1: Brand Starter Splash Screen (exactly 2 seconds) */}
       {loadingStage === 'loader' && (
-        <ThreadsLoader minDuration={650} onFinished={() => setLoadingStage('ready')} />
+        <ThreadsLoader minDuration={2000} onFinished={() => setLoadingStage('ready')} />
       )}
 
       {/* While in 'loader' or 'skeleton' stage, render ONLY the PageSkeleton so the real web page never flashes early */}
       {loadingStage === 'loader' || loadingStage === 'skeleton' ? (
         <PageSkeleton />
+      ) : isWholesaleRoute ? (
+        <WholesalePage
+          onOpenCart={() => {
+            setCartInitialStep('cart');
+            setIsCartOpen(true);
+          }}
+          onOpenAdmin={() => setIsAdminOpen(true)}
+          onOpenTracking={handleOpenTracking}
+          cartCount={totalCartCount}
+        />
+      ) : isDirectProductRoute ? (
+        <ProductPage
+          onAddToCart={handleAddToCart}
+          onBuyNow={handleBuyNow}
+          onOpenCart={() => {
+            setCartInitialStep('cart');
+            setIsCartOpen(true);
+          }}
+          onOpenAdmin={() => setIsAdminOpen(true)}
+          onOpenTracking={handleOpenTracking}
+          cartCount={totalCartCount}
+        />
       ) : (
         /* Stage 3: Live Interactive Storefront (revealed immediately) */
         <>
@@ -404,55 +488,6 @@ function App() {
             />
           </main>
 
-          {/* Interactive Cart Sidebar Drawer */}
-          <CartDrawer
-            isOpen={isCartOpen}
-            onClose={() => setIsCartOpen(false)}
-            initialStep={cartInitialStep}
-            cartItems={cartItems}
-            onUpdateQty={handleUpdateQty}
-            onRemoveItem={handleRemoveItem}
-            onClearCart={handleClearCart}
-            onOpenTracking={handleOpenTracking}
-          />
-
-          {/* Lazy Loaded Overlays (Admin & Modals) - zero bundle overhead on initial load */}
-          <React.Suspense fallback={null}>
-            {Boolean(detailProduct) && (
-              <ProductDetailModal
-                product={detailProduct}
-                isOpen={Boolean(detailProduct)}
-                onClose={handleCloseDetail}
-                onAddToCart={handleAddToCart}
-                onBuyNow={handleBuyNow}
-              />
-            )}
-
-            {isAdminOpen && (
-              <AdminPanel
-                isOpen={isAdminOpen}
-                onClose={() => {
-                  setIsAdminOpen(false);
-                  try {
-                    const path = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
-                    if (ADMIN_PATH_SLUGS.includes(path)) {
-                      window.history.replaceState({}, document.title, '/');
-                    }
-                  } catch (e) {}
-                }}
-                onProductsChanged={() => setRefreshTrigger((prev) => prev + 1)}
-              />
-            )}
-
-            {isTrackingOpen && (
-              <OrderTrackingModal
-                isOpen={isTrackingOpen}
-                onClose={() => setIsTrackingOpen(false)}
-                initialOrderId={trackingInitialId}
-              />
-            )}
-          </React.Suspense>
-
           {/* Complete E-Commerce Storefront Footer */}
           <Footer
             onCategoryClick={handleCategorySelect}
@@ -463,6 +498,55 @@ function App() {
           <WhatsAppButton />
         </>
       )}
+
+      {/* Interactive Cart Sidebar Drawer (Available on all pages) */}
+      <CartDrawer
+        isOpen={isCartOpen}
+        onClose={() => setIsCartOpen(false)}
+        initialStep={cartInitialStep}
+        cartItems={cartItems}
+        onUpdateQty={handleUpdateQty}
+        onRemoveItem={handleRemoveItem}
+        onClearCart={handleClearCart}
+        onOpenTracking={handleOpenTracking}
+      />
+
+      {/* Lazy Loaded Overlays (Admin, Modal, Tracking) - zero bundle overhead on initial load */}
+      <React.Suspense fallback={null}>
+        {Boolean(detailProduct) && (
+          <ProductDetailModal
+            product={detailProduct}
+            isOpen={Boolean(detailProduct)}
+            onClose={handleCloseDetail}
+            onAddToCart={handleAddToCart}
+            onBuyNow={handleBuyNow}
+          />
+        )}
+
+        {isAdminOpen && (
+          <AdminPanel
+            isOpen={isAdminOpen}
+            onClose={() => {
+              setIsAdminOpen(false);
+              try {
+                const path = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+                if (ADMIN_PATH_SLUGS.includes(path)) {
+                  window.history.replaceState({}, document.title, '/');
+                }
+              } catch (e) {}
+            }}
+            onProductsChanged={() => setRefreshTrigger((prev) => prev + 1)}
+          />
+        )}
+
+        {isTrackingOpen && (
+          <OrderTrackingModal
+            isOpen={isTrackingOpen}
+            onClose={() => setIsTrackingOpen(false)}
+            initialOrderId={trackingInitialId}
+          />
+        )}
+      </React.Suspense>
     </div>
   );
 }

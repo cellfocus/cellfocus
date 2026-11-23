@@ -1,136 +1,129 @@
 import { useEffect } from 'react';
+import {
+  BASE_URL,
+  DEFAULT_IMAGE,
+  CATEGORY_SEO,
+  STATIC_PAGES_SEO,
+  slugify,
+  resolveImageUrl,
+  truncate,
+  getFutureIsoDate,
+} from '../config/seoConfig';
 
 /**
  * SEOHead - Dynamic Meta, Canonical, and JSON-LD Schema Engine for CellFocus
  * Automatically synchronizes document title, meta descriptions, canonical URLs,
- * Open Graph, and rich Product/Breadcrumb schemas based on user navigation.
+ * Open Graph, Twitter Cards, and Product/Breadcrumb schemas based on user navigation.
+ * 
+ * Complies with strict Google Search guidelines:
+ * - NO fake aggregateRating (only real review markup)
+ * - Real dynamic prices with PKR currency
+ * - Dynamic availability based on stock
+ * - Dynamic priceValidUntil (90 days forward)
+ * - No meta keywords
  */
-export default function SEOHead({ category, product }) {
+export default function SEOHead({ category, product, pagePath }) {
   useEffect(() => {
-    const BASE_URL = 'https://www.cellfocusaccessories.com';
-    const DEFAULT_TITLE = 'Wholesale & Retail Mobile Accessories Pakistan | CellFocus';
-    const DEFAULT_DESC =
+    let title = 'Wholesale & Retail Mobile Accessories Pakistan | CellFocus';
+    let description =
       'Buy original smartwatches, wireless earpods, fast chargers & handsfree at wholesale & retail rates in Pakistan. Cash on delivery Lahore, Karachi & nationwide.';
-    const DEFAULT_CANONICAL = `${BASE_URL}/`;
-    const DEFAULT_KEYWORDS =
-      'smart watch price in pakistan, sasta charger price, best smart watch pakistan mein, original earpods wholesale price lahore karachi islamabad, mobile accessories ki wholesale market, fast charger online shopping pakistan, handsfree wholesale rate, cellfocus';
+    let canonical = `${BASE_URL}/`;
+    let ogImage = DEFAULT_IMAGE;
+    let ogType = 'website';
+    let dynamicSchemas = [];
 
-    let title = DEFAULT_TITLE;
-    let description = DEFAULT_DESC;
-    let canonical = DEFAULT_CANONICAL;
-    let keywords = DEFAULT_KEYWORDS;
-    let dynamicSchema = null;
-
+    // 1. SPECIFIC PRODUCT VIEW
     if (product) {
-      // 1. SPECIFIC PRODUCT MODAL VIEW
       const pid = product.id || product._id || 'item';
-      const cleanSlug = (product.name || 'product')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
+      const name = product.name || 'Mobile Accessory';
+      const slug = slugify(name);
+      canonical = `${BASE_URL}/product/${slug}-${pid}`;
 
-      title = `${product.name} Price in Pakistan (Wholesale & Retail) | CellFocus`;
-      description = `Buy original ${product.name} online in Pakistan. Guaranteed authentic, best wholesale & retail rate, 7-day warranty, and fast cash on delivery nationwide.`;
-      canonical = `${BASE_URL}/?product=${cleanSlug}&id=${pid}`;
-      keywords = `${product.name}, ${product.name} price in pakistan, ${product.name} wholesale rate, sasta ${product.name}, original ${product.name} lahore karachi, cellfocus`;
+      const rawTitle = `${name} Price in Pakistan | CellFocus`;
+      title = rawTitle.length <= 60 ? rawTitle : truncate(rawTitle, 60);
 
-      const imageUrl =
-        product.image && product.image.startsWith('http')
-          ? product.image
-          : `${BASE_URL}/logo.png`;
+      const priceNum = Number(product.price) || 0;
+      const priceFormatted = priceNum > 0 ? `Rs. ${priceNum.toLocaleString()}. ` : '';
+      description = truncate(
+        `Buy original ${name} online in Pakistan. ${priceFormatted}Wholesale & retail rates, checking warranty, and fast cash on delivery nationwide. Order now!`,
+        155
+      );
 
-      dynamicSchema = {
-        '@context': 'https://schema.org',
-        '@graph': [
-          {
-            '@type': 'Product',
-            '@id': `${BASE_URL}/#product-${pid}`,
-            name: product.name,
-            image: [imageUrl],
-            description:
-              product.description ||
-              `Original ${product.name} available at competitive retail and wholesale rates across Pakistan by CellFocus.`,
-            sku: String(pid),
-            mpn: `CF-${pid}`,
-            brand: {
-              '@type': 'Brand',
-              name: 'CellFocus',
-            },
-            offers: {
-              '@type': 'Offer',
-              url: canonical,
-              priceCurrency: 'PKR',
-              price: Number(product.price) || 0,
-              priceValidUntil: '2027-12-31',
-              itemCondition: 'https://schema.org/NewCondition',
-              availability: 'https://schema.org/InStock',
-              seller: {
-                '@type': 'Organization',
-                name: 'CellFocus',
-                url: BASE_URL,
-              },
-            },
-            aggregateRating: {
-              '@type': 'AggregateRating',
-              ratingValue: '4.9',
-              reviewCount: '128',
-              bestRating: '5',
-              worstRating: '1',
-            },
-          },
-          {
-            '@type': 'BreadcrumbList',
-            itemListElement: [
-              {
-                '@type': 'ListItem',
-                position: 1,
-                name: 'Home',
-                item: BASE_URL,
-              },
-              {
-                '@type': 'ListItem',
-                position: 2,
-                name: product.category
-                  ? product.category.toUpperCase()
-                  : 'Accessories',
-                item: `${BASE_URL}/?category=${product.category || 'all'}`,
-              },
-              {
-                '@type': 'ListItem',
-                position: 3,
-                name: product.name,
-                item: canonical,
-              },
-            ],
-          },
-        ],
-      };
-    } else if (category && category !== 'all') {
-      // 2. CATEGORY-FILTERED VIEW
-      if (category === 'chargers') {
-        title = 'Fast Chargers & Power Adapters Price in Pakistan | Wholesale & Retail CellFocus';
-        description =
-          'Buy original GaN fast chargers, 65W dual-port adapters & type-c cables in Pakistan at wholesale & retail prices. Sasta charger price, 24h dispatch & COD.';
-        canonical = `${BASE_URL}/?category=chargers`;
-        keywords =
-          'sasta charger price, fast charger online shopping pakistan, wholesale charger price in pakistan, gan 65w charger lahore, type c fast charging adapter karachi, mobile charger wholesale supplier pakistan, cellfocus chargers';
-      } else if (category === 'airpods') {
-        title = 'Original Wireless Earpods & AirPods Price in Pakistan | CellFocus Wholesale';
-        description =
-          'Buy premium wireless earpods & airpods in Lahore, Karachi, Islamabad with active noise cancellation and heavy bass at wholesale rates. Cash on delivery.';
-        canonical = `${BASE_URL}/?category=airpods`;
-        keywords =
-          'original earpods wholesale price lahore karachi islamabad, airpods wholesale rate pakistan, sasta wireless earbuds, hall road airpods wholesale, best earbuds in pakistan mein, cellfocus wireless audio';
-      } else if (category === 'handsfree') {
-        title = 'Original Handsfree & Earphones Price in Pakistan | CellFocus Wholesale Rate';
-        description =
-          'Premium bass handsfree & in-ear earphones with HD mic across Pakistan. Handsfree wholesale rate for phone retailers and bulk buyers in Shah Alam & Hall Road.';
-        canonical = `${BASE_URL}/?category=handsfree`;
-        keywords =
-          'handsfree wholesale rate, original handsfree sasti price, bass handsfree pakistan, mobile accessories ki wholesale market, 3.5mm jack handsfree, type c handsfree pakistan, cellfocus handsfree';
+      const primaryImg = resolveImageUrl(
+        product.image || (Array.isArray(product.images) && product.images[0])
+      );
+      ogImage = primaryImg;
+      ogType = 'product';
+
+      const inStock = product.stock === undefined || product.stock === null || Number(product.stock) > 0;
+      const availability = inStock ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock';
+
+      const imageGallery = [primaryImg];
+      if (Array.isArray(product.images)) {
+        product.images.forEach((img) => {
+          const res = resolveImageUrl(img);
+          if (!imageGallery.includes(res)) imageGallery.push(res);
+        });
       }
 
-      dynamicSchema = {
+      // Build strictly compliant Product schema WITHOUT fake ratings
+      const productSchema = {
+        '@context': 'https://schema.org',
+        '@type': 'Product',
+        '@id': `${canonical}#product`,
+        name,
+        image: imageGallery,
+        description: product.description || product.details || description,
+        sku: `CF-${pid}`,
+        mpn: `CF-PK-${pid}`,
+        brand: {
+          '@type': 'Brand',
+          name: 'CellFocus',
+        },
+        category: product.category || 'Mobile Accessories',
+      };
+
+      if (priceNum > 0) {
+        productSchema.offers = {
+          '@type': 'Offer',
+          url: canonical,
+          priceCurrency: 'PKR',
+          price: priceNum,
+          priceValidUntil: getFutureIsoDate(90),
+          itemCondition: 'https://schema.org/NewCondition',
+          availability,
+          seller: {
+            '@type': 'Organization',
+            name: 'CellFocus',
+            url: BASE_URL,
+          },
+          hasMerchantReturnPolicy: {
+            '@type': 'MerchantReturnPolicy',
+            applicableCountry: 'PK',
+            returnPolicyCategory: 'https://schema.org/MerchantReturnFiniteReturnWindow',
+            merchantReturnDays: 7,
+            returnMethod: 'https://schema.org/ReturnByMail',
+            returnFees: 'https://schema.org/FreeReturn',
+          },
+          shippingDetails: {
+            '@type': 'OfferShippingDetails',
+            shippingRate: {
+              '@type': 'MonetaryAmount',
+              value: '0',
+              currency: 'PKR',
+            },
+            shippingDestination: {
+              '@type': 'DefinedRegion',
+              addressCountry: 'PK',
+            },
+          },
+        };
+      }
+
+      const catSlug = (product.category || 'all').toLowerCase();
+      const catConfig = CATEGORY_SEO[catSlug] || { name: 'Accessories', canonical: `${BASE_URL}/#products` };
+
+      const breadcrumbSchema = {
         '@context': 'https://schema.org',
         '@type': 'BreadcrumbList',
         itemListElement: [
@@ -138,19 +131,110 @@ export default function SEOHead({ category, product }) {
             '@type': 'ListItem',
             position: 1,
             name: 'Home',
-            item: BASE_URL,
+            item: `${BASE_URL}/`,
           },
           {
             '@type': 'ListItem',
             position: 2,
-            name: category.charAt(0).toUpperCase() + category.slice(1),
+            name: catConfig.name,
+            item: catConfig.canonical || `${BASE_URL}/category/${catSlug}`,
+          },
+          {
+            '@type': 'ListItem',
+            position: 3,
+            name: truncate(name, 35),
             item: canonical,
           },
         ],
       };
+
+      dynamicSchemas = [productSchema, breadcrumbSchema];
+    }
+    // 2. CATEGORY VIEW
+    else if (category && category !== 'all') {
+      const cleanCat = String(category).toLowerCase().trim();
+      const cat = CATEGORY_SEO[cleanCat] || {
+        name: cleanCat.charAt(0).toUpperCase() + cleanCat.slice(1),
+        title: `${cleanCat.charAt(0).toUpperCase() + cleanCat.slice(1)} Price in Pakistan | CellFocus`,
+        description: `Shop original ${cleanCat} in Pakistan at wholesale and retail rates with cash on delivery across Lahore, Karachi and nationwide.`,
+        canonical: `${BASE_URL}/category/${cleanCat}`,
+      };
+
+      title = cat.title;
+      description = cat.description;
+      canonical = cat.canonical;
+
+      const breadcrumbSchema = {
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          {
+            '@type': 'ListItem',
+            position: 1,
+            name: 'Home',
+            item: `${BASE_URL}/`,
+          },
+          {
+            '@type': 'ListItem',
+            position: 2,
+            name: cat.name,
+            item: canonical,
+          },
+        ],
+      };
+
+      dynamicSchemas = [breadcrumbSchema];
+    }
+    // 3. STATIC PAGE VIEW
+    else if (pagePath) {
+      const staticKey = pagePath.replace(/^\//, '').toLowerCase();
+      if (STATIC_PAGES_SEO[staticKey]) {
+        const page = STATIC_PAGES_SEO[staticKey];
+        title = page.title;
+        description = page.description;
+        canonical = page.canonical;
+
+        const breadcrumbSchema = {
+          '@context': 'https://schema.org',
+          '@type': 'BreadcrumbList',
+          itemListElement: [
+            {
+              '@type': 'ListItem',
+              position: 1,
+              name: 'Home',
+              item: `${BASE_URL}/`,
+            },
+            {
+              '@type': 'ListItem',
+              position: 2,
+              name: page.h1,
+              item: page.canonical,
+            },
+          ],
+        };
+
+        dynamicSchemas = [breadcrumbSchema];
+      }
+    }
+    // 4. HOMEPAGE VIEW
+    else {
+      const websiteSchema = {
+        '@context': 'https://schema.org',
+        '@type': 'WebSite',
+        '@id': `${BASE_URL}/#website`,
+        url: `${BASE_URL}/`,
+        name: 'CellFocus Mobile Accessories',
+        description,
+        potentialAction: {
+          '@type': 'SearchAction',
+          target: `${BASE_URL}/?search={search_term_string}`,
+          'query-input': 'required name=search_term_string',
+        },
+      };
+      dynamicSchemas = [websiteSchema];
     }
 
-    // Apply document title
+    // Apply Document Title
     document.title = title;
 
     // Helper to set or create meta tag
@@ -165,14 +249,33 @@ export default function SEOHead({ category, product }) {
     };
 
     setMeta('name', 'description', description);
-    setMeta('name', 'keywords', keywords);
+    setMeta('name', 'title', title);
+
+    // Open Graph
     setMeta('property', 'og:title', title);
     setMeta('property', 'og:description', description);
     setMeta('property', 'og:url', canonical);
+    setMeta('property', 'og:type', ogType);
+    setMeta('property', 'og:image', ogImage);
+    setMeta('property', 'og:image:secure_url', ogImage);
+    setMeta('property', 'og:image:width', '1200');
+    setMeta('property', 'og:image:height', '630');
+    setMeta('property', 'og:image:alt', title);
+    setMeta('property', 'og:site_name', 'CellFocus Mobile Accessories Pakistan');
+    setMeta('property', 'og:locale', 'en_PK');
+
+    // Twitter Cards
+    setMeta('name', 'twitter:card', 'summary_large_image');
     setMeta('name', 'twitter:title', title);
     setMeta('name', 'twitter:description', description);
+    setMeta('name', 'twitter:image', ogImage);
+    setMeta('name', 'twitter:image:alt', title);
 
-    // Apply Canonical Link
+    // Remove obsolete meta keywords tag if still present
+    const oldKeywords = document.querySelector('meta[name="keywords"]');
+    if (oldKeywords) oldKeywords.remove();
+
+    // Canonical link
     let canonicalLink = document.querySelector('link[rel="canonical"]');
     if (!canonicalLink) {
       canonicalLink = document.createElement('link');
@@ -181,22 +284,23 @@ export default function SEOHead({ category, product }) {
     }
     canonicalLink.setAttribute('href', canonical);
 
-    // Inject Dynamic JSON-LD Schema
+    // Dynamic JSON-LD Schema
     const SCRIPT_ID = 'cellfocus-dynamic-schema';
     let scriptEl = document.getElementById(SCRIPT_ID);
-    if (dynamicSchema) {
+    if (dynamicSchemas.length > 0) {
       if (!scriptEl) {
         scriptEl = document.createElement('script');
         scriptEl.id = SCRIPT_ID;
         scriptEl.type = 'application/ld+json';
         document.head.appendChild(scriptEl);
       }
-      scriptEl.textContent = JSON.stringify(dynamicSchema);
+      scriptEl.textContent = JSON.stringify(
+        dynamicSchemas.length === 1 ? dynamicSchemas[0] : { '@context': 'https://schema.org', '@graph': dynamicSchemas }
+      );
     } else if (scriptEl) {
       scriptEl.remove();
     }
-  }, [category, product]);
+  }, [category, product, pagePath]);
 
   return null;
 }
-

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import defaultProducts from '../data/defaultProducts.json';
 import { API_BASE_URL, ENDPOINTS } from '../config/api';
+import { compressImageFile } from '../utils/imageCompressor';
 
 const API_PRODUCTS = ENDPOINTS.PRODUCTS;
 const API_ORDERS = ENDPOINTS.ORDERS;
@@ -198,6 +199,29 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
   });
   const [emailTestAddr, setEmailTestAddr] = useState('');
   const [emailBusy, setEmailBusy] = useState(false);
+  const [isSyncingLive, setIsSyncingLive] = useState(false);
+
+  const handleSyncFromLive = async () => {
+    setIsSyncingLive(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/sync-live`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || 'Successfully synced with live prices & sales!', 'success');
+        fetchProducts();
+        if (onProductsChanged) onProductsChanged();
+      } else {
+        showToast(data.message || 'Failed to sync with live store.', 'error');
+      }
+    } catch (err) {
+      showToast('Network error syncing from live store.', 'error');
+    } finally {
+      setIsSyncingLive(false);
+    }
+  };
 
   const getAuthHeaders = () => {
     const token = adminToken || (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('cf_admin_token') : '') || '';
@@ -284,85 +308,37 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
     colors: [],
   });
 
-  // Client-side instant image processing & compression for direct file uploads
-  const processImageUpload = (file, key) => {
+  // Client-side automatic image size reducer & WebP compression for direct file uploads
+  const processImageUpload = async (file, key) => {
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      showToast('Please select a valid image file (PNG, JPG, WebP)', 'error');
-      return;
+    try {
+      const result = await compressImageFile(file, { maxWidth: 800, maxHeight: 800, quality: 0.8 });
+      setForm((prev) => ({
+        ...prev,
+        [key]: result.dataUrl,
+      }));
+      const slotNum = key === 'image' ? '1' : key === 'image2' ? '2' : key === 'image3' ? '3' : '4';
+      showToast(`⚡ Photo ${slotNum} auto-reduced: ${result.summary}!`, 'success');
+    } catch (err) {
+      showToast(err.message || 'Error processing image', 'error');
     }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const maxDim = 1200;
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-        const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
-        setForm((prev) => ({
-          ...prev,
-          [key]: optimizedDataUrl,
-        }));
-        const slotNum = key === 'image' ? '1' : key === 'image2' ? '2' : key === 'image3' ? '3' : '4';
-        showToast(`Photo ${slotNum} loaded successfully!`);
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
   };
 
-  const processColorImageUpload = (file, index) => {
+  const processColorImageUpload = async (file, index) => {
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      showToast('Please select a valid image file (PNG, JPG, WebP)', 'error');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const maxDim = 1200;
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
+    try {
+      const result = await compressImageFile(file, { maxWidth: 800, maxHeight: 800, quality: 0.8 });
+      setForm((prev) => {
+        const next = Array.isArray(prev.colors) ? [...prev.colors] : [];
+        if (next[index]) {
+          next[index] = { ...next[index], image: result.dataUrl };
         }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-        const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
-        setForm((prev) => {
-          const next = Array.isArray(prev.colors) ? [...prev.colors] : [];
-          if (next[index]) {
-            next[index] = { ...next[index], image: optimizedDataUrl };
-          }
-          return { ...prev, colors: next };
-        });
-        showToast('Color variant photo loaded successfully!');
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
+        return { ...prev, colors: next };
+      });
+      showToast(`⚡ Color photo auto-reduced: ${result.summary}!`, 'success');
+    } catch (err) {
+      showToast(err.message || 'Error processing image', 'error');
+    }
   };
 
   const showToast = (text, type = 'success') => {
@@ -1617,15 +1593,27 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
           {/* TAB 2: PRODUCT CATALOG LIST (Exact original clean list layout) */}
           {activeTab === 'products' && (
             <div className="space-y-3">
-              <div className="flex justify-between items-center mb-2">
+              <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
                 <span className="text-xs text-[#78746a]">Manage catalog items</span>
-                <button
-                  onClick={fetchProducts}
-                  className="flex items-center gap-1 text-[11px] font-medium text-[#4a473f] hover:text-[#1c1b18] cursor-pointer"
-                >
-                  <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-                  <span>Refresh</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSyncFromLive}
+                    disabled={isSyncingLive}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-300 transition cursor-pointer disabled:opacity-50"
+                    title="Pull live prices, sales and inventory from production store"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isSyncingLive ? 'animate-spin' : ''}`} />
+                    <span>{isSyncingLive ? 'Syncing...' : 'Sync Live Prices'}</span>
+                  </button>
+                  <button
+                    onClick={fetchProducts}
+                    className="flex items-center gap-1 text-[11px] font-medium text-[#4a473f] hover:text-[#1c1b18] cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+                    <span>Refresh</span>
+                  </button>
+                </div>
               </div>
 
               {products.length === 0 ? (
@@ -1877,38 +1865,51 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                   )}
                 </div>
 
-                {/* Connector / Pin Type Selector — available for ANY item */}
+                {/* Connector / Pin Type Multi-Selector — available for ANY item */}
                 <div className="p-3.5 rounded-xl border border-[#dedad0] bg-[#faf8f4]">
                   <div className="mb-2">
-                    <span className="text-xs font-bold text-[#1c1b18] block">Connector / Pin Option (Optional)</span>
+                    <div className="flex items-center justify-between flex-wrap gap-1">
+                      <span className="text-xs font-bold text-[#1c1b18] block">Connector / Pin Options (Multi-Select)</span>
+                      <span className="text-[10px] text-[#78746a] font-medium bg-[#f0ede6] px-2 py-0.5 rounded-full">
+                        Choose one or multiple
+                      </span>
+                    </div>
                     <p className="text-[11px] text-[#78746a] mt-0.5">
-                      Select Type-C, USB Micro, or Dual Pin (Type-C &amp; USB-Micro). Whichever you choose will be displayed on the product card on the main store page.
+                      Select multiple pin types (e.g. Type-C, USB Micro, or Dual Pin). Customers will see selectable pill buttons on the store card to choose their preferred pin.
                     </p>
                   </div>
+
                   <div className="flex gap-2 flex-wrap items-center">
                     {[
-                      { id: 'Type-C', label: 'Type-C', subCategory: 'type-c' },
-                      { id: 'USB Micro', label: 'USB Micro', subCategory: 'usb-micro' },
-                      { id: 'Dual Pin (Type-C & USB-Micro)', label: 'Dual Pin (Type-C & USB-Micro)', subCategory: 'dual-pin' },
+                      { id: 'Type-C', label: 'Type-C' },
+                      { id: 'USB Micro', label: 'USB Micro' },
+                      { id: 'Dual Pin (Type-C & USB-Micro)', label: 'Dual Pin (Type-C & USB-Micro)' },
                     ].map((opt) => {
-                      const isChecked = Array.isArray(form.connectorTypes) && (
-                        form.connectorTypes.includes(opt.id) ||
-                        (opt.id === 'Dual Pin (Type-C & USB-Micro)' && form.connectorTypes.includes('Type-C') && form.connectorTypes.includes('USB Micro'))
-                      );
+                      const current = Array.isArray(form.connectorTypes) ? form.connectorTypes : [];
+                      const isChecked = current.includes(opt.id);
                       return (
                         <button
                           key={opt.id}
                           type="button"
                           onClick={() => {
-                            if (isChecked) {
-                              setForm({ ...form, connectorTypes: [], subCategory: '' });
-                            } else {
-                              setForm({
-                                ...form,
-                                connectorTypes: [opt.id],
-                                subCategory: opt.subCategory,
-                              });
+                            const updated = isChecked
+                              ? current.filter((x) => x !== opt.id)
+                              : [...current, opt.id];
+
+                            let updatedSub = '';
+                            if (updated.includes('Dual Pin (Type-C & USB-Micro)') || (updated.includes('Type-C') && updated.includes('USB Micro'))) {
+                              updatedSub = 'dual-pin';
+                            } else if (updated.includes('Type-C')) {
+                              updatedSub = 'type-c';
+                            } else if (updated.includes('USB Micro')) {
+                              updatedSub = 'usb-micro';
                             }
+
+                            setForm({
+                              ...form,
+                              connectorTypes: updated,
+                              subCategory: updatedSub,
+                            });
                           }}
                           className={`px-3.5 py-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
                             isChecked
@@ -1916,28 +1917,56 @@ export default function AdminPanel({ isOpen, onClose, onProductsChanged }) {
                               : 'bg-white text-[#1c1b18] border-[#dedad0] hover:border-[#1c1b18]/60 hover:bg-[#f4f2ea]'
                           }`}
                         >
-                          {isChecked && <Check className="w-3.5 h-3.5" strokeWidth={3} />}
+                          <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center text-[9px] ${
+                            isChecked ? 'border-white bg-white/20 text-white' : 'border-[#b5b1a6] bg-transparent'
+                          }`}>
+                            {isChecked && '✓'}
+                          </span>
                           <span>{opt.label}</span>
                         </button>
                       );
                     })}
+
+                    {/* Quick Helper: Select Both Type-C & USB Micro */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const current = Array.isArray(form.connectorTypes) ? form.connectorTypes : [];
+                        const hasBoth = current.includes('Type-C') && current.includes('USB Micro');
+                        const updated = hasBoth
+                          ? current.filter((x) => x !== 'Type-C' && x !== 'USB Micro')
+                          : Array.from(new Set([...current, 'Type-C', 'USB Micro']));
+                        setForm({
+                          ...form,
+                          connectorTypes: updated,
+                          subCategory: updated.length > 0 ? 'dual-pin' : '',
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded-xl border border-teal-300 text-teal-800 bg-teal-50/70 hover:bg-teal-100/70 text-xs font-medium transition cursor-pointer"
+                      title="Toggle both Type-C and USB Micro"
+                    >
+                      + Both (Type-C &amp; USB Micro)
+                    </button>
 
                     {Array.isArray(form.connectorTypes) && form.connectorTypes.length > 0 && (
                       <button
                         type="button"
                         onClick={() => setForm({ ...form, connectorTypes: [], subCategory: '' })}
                         className="px-3 py-1.5 rounded-xl border border-dashed border-[#dedad0] text-xs font-medium text-[#78746a] hover:text-rose-600 hover:border-rose-300 hover:bg-rose-50/50 transition cursor-pointer"
-                        title="Clear pin selection"
+                        title="Clear all selected pins"
                       >
-                        Clear / None
+                        Clear All
                       </button>
                     )}
                   </div>
+
                   {Array.isArray(form.connectorTypes) && form.connectorTypes.length > 0 && (
-                    <p className="text-[11px] text-emerald-700 mt-2 font-medium flex items-center gap-1">
-                      <span>✓ Selected:</span>
-                      <span className="font-bold">{form.connectorTypes.join(', ')}</span>
-                    </p>
+                    <div className="mt-2.5 pt-2 border-t border-[#e8e4da] flex items-center justify-between text-[11px] text-[#4a473f]">
+                      <span className="flex items-center gap-1">
+                        <span className="font-bold text-emerald-800">✓ Selected ({form.connectorTypes.length}):</span>
+                        <span className="font-medium text-[#1c1b18]">{form.connectorTypes.join(' • ')}</span>
+                      </span>
+                    </div>
                   )}
                 </div>
 

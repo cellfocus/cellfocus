@@ -50,6 +50,87 @@ function getSecurityConfig() {
   };
 }
 
+// POST /api/admin/sync-live: Synchronize prices, sales, and products from live production website
+router.post('/sync-live', requireAdminAuth, async (req, res) => {
+  try {
+    const https = require('https');
+    const liveUrl = 'https://cellfocusaccessories.com/api/products';
+
+    const liveData = await new Promise((resolve, reject) => {
+      const request = https.get(liveUrl, { headers: { 'User-Agent': 'CellFocus-Admin-Sync/1.0' } }, (response) => {
+        let body = '';
+        response.on('data', chunk => body += chunk);
+        response.on('end', () => {
+          try {
+            const parsed = JSON.parse(body);
+            resolve(parsed.data || parsed);
+          } catch (e) {
+            reject(new Error('Invalid JSON received from live site'));
+          }
+        });
+      });
+      request.on('error', reject);
+      request.setTimeout(10000, () => {
+        request.destroy();
+        reject(new Error('Connection timeout to live store'));
+      });
+    });
+
+    if (!Array.isArray(liveData) || liveData.length === 0) {
+      return res.status(400).json({ success: false, message: 'No products returned from live store.' });
+    }
+
+    const localProducts = await repo.getAllProducts();
+    let updatedCount = 0;
+
+    for (const liveItem of liveData) {
+      const match = localProducts.find(p => (p.id && p.id === liveItem.id) || (p._id && p._id === liveItem._id))
+        || localProducts.find(p => p.name === liveItem.name);
+
+      if (match) {
+        const updatePayload = {
+          price: Number(liveItem.price),
+          originalPrice: Number(liveItem.originalPrice) || 0,
+          isOnSale: Boolean(liveItem.isOnSale),
+          stock: Number(liveItem.stock) || match.stock,
+          details: liveItem.details || match.details,
+          specs: liveItem.specs || match.specs,
+          isBestSeller: liveItem.isBestSeller !== undefined ? Boolean(liveItem.isBestSeller) : match.isBestSeller,
+          isHotDeal: liveItem.isHotDeal !== undefined ? Boolean(liveItem.isHotDeal) : match.isHotDeal,
+          displayOrder: liveItem.displayOrder !== undefined ? liveItem.displayOrder : match.displayOrder,
+          categoryOrder: liveItem.categoryOrder !== undefined ? liveItem.categoryOrder : match.categoryOrder,
+          connectorTypes: Array.isArray(liveItem.connectorTypes) && liveItem.connectorTypes.length > 0 ? liveItem.connectorTypes : match.connectorTypes,
+          subCategory: liveItem.subCategory || match.subCategory,
+        };
+        await repo.updateProduct(match.id || match._id, updatePayload);
+        updatedCount++;
+      } else {
+        await repo.createProduct(liveItem);
+        updatedCount++;
+      }
+    }
+
+    const finalProducts = await repo.getAllProducts();
+    try {
+      const clientProductsPath = path.join(__dirname, '..', '..', 'client', 'src', 'data', 'defaultProducts.json');
+      fs.writeFileSync(clientProductsPath, JSON.stringify(finalProducts, null, 2), 'utf8');
+    } catch (e) {}
+
+    res.json({
+      success: true,
+      message: `Successfully synchronized ${updatedCount} products with live store pricing & sales!`,
+      count: finalProducts.length,
+      data: finalProducts,
+    });
+  } catch (err) {
+    console.error('[Admin Sync] Error syncing from live:', err);
+    res.status(500).json({
+      success: false,
+      message: `Failed to sync from live store: ${err.message}`,
+    });
+  }
+});
+
 function saveSecurityConfig(data) {
   try {
     fs.writeFileSync(SECURITY_FILE, JSON.stringify(data, null, 2), 'utf8');
